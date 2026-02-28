@@ -4,7 +4,7 @@
 # Ignore raw and processed data (Datasets)
 data/
 ai_pipeline/data/
-*.jsonl
+# Ignore raw JSONL data files but not final datasets
 github_advisories_raw.json
 =======
 # ==========================================
@@ -14,7 +14,7 @@ github_advisories_raw.json
 # Ignore raw and processed data (Datasets)
 data/
 ai_pipeline/data/
-*.jsonl
+# Ignore raw data but not final datasets
 github_advisories_raw.json
 
 # SARD C dataset
@@ -230,7 +230,7 @@ tests/playground/*
 # Ignore raw and processed data (Datasets)
 data/
 ai_pipeline/data/
-*.jsonl
+# Ignore raw data but not final datasets
 github_advisories_raw.json
 
 # Weights & Biases local logs (Crucial for the W&B Track!)
