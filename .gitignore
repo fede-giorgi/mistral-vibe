@@ -199,3 +199,22 @@ result-*
 # Tests run the agent in the playground, we don't need to keep the session files
 tests/playground/*
 .
+
+
+# ==========================================
+# HACKATHON SPECIFIC IGNORES (Data & Models)
+# ==========================================
+
+# Ignore raw and processed data (Datasets)
+data/
+ai_pipeline/data/
+*.jsonl
+github_advisories_raw.json
+
+# Weights & Biases local logs (Crucial for the W&B Track!)
+wandb/
+
+# Any locally downloaded model weights
+*.gguf
+*.safetensors
+*.bin
