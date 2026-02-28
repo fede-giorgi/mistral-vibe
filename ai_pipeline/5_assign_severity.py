@@ -152,7 +152,7 @@ Justification: [brief reason based on guidelines above]"""
             for entry in processed_entries:
                 f.write(json.dumps(entry) + '\n')
 
-        print(f"\n✅ Processing complete!")
+        print(f"\nProcessing complete!")
         print(f"Severity distribution:")
         for level, count in self.stats.items():
             if level != "ERROR":
