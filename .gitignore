@@ -1,3 +1,25 @@
+# HACKATHON SPECIFIC IGNORES (Data & Models)
+# ==========================================
+
+# Ignore raw and processed data (Datasets)
+data/
+ai_pipeline/data/
+*.jsonl
+github_advisories_raw.json
+=======
+# ==========================================
+# HACKATHON SPECIFIC IGNORES (Data & Models)
+# ==========================================
+
+# Ignore raw and processed data (Datasets)
+data/
+ai_pipeline/data/
+*.jsonl
+github_advisories_raw.json
+
+# SARD C dataset
+sard_c/
+
 # General
 .DS_Store
 .AppleDouble
