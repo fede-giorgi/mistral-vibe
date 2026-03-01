@@ -122,4 +122,5 @@ def run_remediation_loop(
         total_persisting=total_persisting,
         total_new=total_new,
         converged=converged,
+        final_code=current_code,
     )

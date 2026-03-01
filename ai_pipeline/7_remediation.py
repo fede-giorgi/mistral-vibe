@@ -126,6 +126,11 @@ def main() -> None:
         help="Write full JSON results to this path",
     )
     parser.add_argument(
+        "--save-fixed",
+        default=None,
+        help="Write the final remediated code to this file path",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging",
@@ -211,6 +216,11 @@ def main() -> None:
         out_path = Path(args.output_json)
         out_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
         print(f"\nFull results written to {out_path}")
+
+    if args.save_fixed and summary.final_code:
+        fixed_path = Path(args.save_fixed)
+        fixed_path.write_text(summary.final_code, encoding="utf-8")
+        print(f"Fixed code written to {fixed_path}")
 
 
 if __name__ == "__main__":

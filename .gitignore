@@ -240,3 +240,6 @@ wandb/
 *.gguf
 *.safetensors
 *.bin
+
+# Cursor MCP config (contains API keys)
+.cursor/mcp.json

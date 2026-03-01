@@ -89,3 +89,4 @@ class RemediationSummary(BaseModel):
     total_persisting: int = 0
     total_new: int = 0
     converged: bool = False
+    final_code: str | None = None

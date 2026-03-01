@@ -21,7 +21,7 @@ from ai_pipeline.remediation.models import AnalyzerOutput, Finding, Severity
 
 logger = logging.getLogger(__name__)
 
-HF_INFERENCE_URL = "https://api-inference.huggingface.co/models"
+HF_INFERENCE_URL = "https://router.huggingface.co/hf/models"
 
 ANALYZER_SYSTEM_PROMPT = (
     "You are a senior security engineer. Analyze the provided code for security "
@@ -154,45 +154,111 @@ class MistralAnalyzer:
         return json.dumps({"findings": []})
 
     @staticmethod
-    def _parse_findings(raw: str, file_path: str) -> list[Finding]:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse analyzer JSON response")
-            return []
+    def _strip_markdown_fences(text: str) -> str:
+        """Remove ```json ... ``` wrapping if present."""
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            first_nl = stripped.find("\n")
+            if first_nl != -1:
+                stripped = stripped[first_nl + 1:]
+            if stripped.endswith("```"):
+                stripped = stripped[:-3]
+        return stripped.strip()
 
-        raw_findings = data.get("findings", [])
+    @staticmethod
+    def _parse_findings(raw: str, file_path: str) -> list[Finding]:
+        cleaned = MistralAnalyzer._strip_markdown_fences(raw)
+
+        # Try structured JSON first
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            data = None
+
+        if data is not None:
+            if "findings" in data:
+                raw_findings = data["findings"]
+            elif "violation_type" in data:
+                raw_findings = [data]
+            else:
+                raw_findings = [data] if data else []
+
+            findings: list[Finding] = []
+            for i, item in enumerate(raw_findings):
+                try:
+                    sev_raw = item.get("severity", "medium").lower()
+                    if sev_raw == "critical":
+                        sev_raw = "high"
+                    finding = Finding(
+                        id=item.get("id", f"F-{i + 1:03d}"),
+                        file_path=item.get("file_path", file_path),
+                        start_line=item.get("start_line"),
+                        end_line=item.get("end_line"),
+                        cwe=item.get("cwe") or item.get("violation_type"),
+                        severity=Severity(sev_raw),
+                        title=item.get("title") or item.get("violation_type", "Unknown vulnerability"),
+                        explanation=item.get("explanation") or item.get("description") or item.get("risk", ""),
+                        snippet=item.get("snippet"),
+                    )
+                    findings.append(finding)
+                except Exception as e:
+                    logger.warning("Skipping malformed finding at index %d: %s", i, e)
+            return findings
+
+        # Fallback: extract vulnerability mentions from free-text response
+        return MistralAnalyzer._parse_freetext(raw, file_path)
+
+    @staticmethod
+    def _parse_freetext(raw: str, file_path: str) -> list[Finding]:
+        """Extract findings from prose / free-text model output."""
+        import re
+
+        vuln_patterns: list[tuple[str, str, str]] = [
+            (r"(?i)sql.?injection", "CWE-89", "SQL Injection"),
+            (r"(?i)cross.?site.?scripting|XSS", "CWE-79", "Cross-Site Scripting (XSS)"),
+            (r"(?i)command.?injection|os.?command", "CWE-78", "OS Command Injection"),
+            (r"(?i)path.?traversal|directory.?traversal", "CWE-22", "Path Traversal"),
+            (r"(?i)CSRF|cross.?site.?request.?forgery", "CWE-352", "Cross-Site Request Forgery"),
+            (r"(?i)insecure.?deserialization", "CWE-502", "Insecure Deserialization"),
+            (r"(?i)hard.?coded.?(?:password|credential|secret)", "CWE-798", "Hard-coded Credentials"),
+            (r"(?i)(?:debug\s*=\s*True|debug.?mode)", "CWE-489", "Debug Mode Enabled"),
+            (r"(?i)buffer.?overflow", "CWE-120", "Buffer Overflow"),
+            (r"(?i)(?:insecure.?direct.?object|IDOR)", "CWE-639", "Insecure Direct Object Reference"),
+        ]
+
         findings: list[Finding] = []
-        for i, item in enumerate(raw_findings):
-            try:
-                finding = Finding(
-                    id=item.get("id", f"F-{i + 1:03d}"),
-                    file_path=item.get("file_path", file_path),
-                    start_line=item.get("start_line"),
-                    end_line=item.get("end_line"),
-                    cwe=item.get("cwe"),
-                    severity=Severity(item.get("severity", "medium")),
-                    title=item.get("title", "Unknown vulnerability"),
-                    explanation=item.get("explanation", ""),
-                    snippet=item.get("snippet"),
-                )
-                findings.append(finding)
-            except Exception as e:
-                logger.warning("Skipping malformed finding at index %d: %s", i, e)
+        seen_cwes: set[str] = set()
+        for pattern, cwe, title in vuln_patterns:
+            if re.search(pattern, raw) and cwe not in seen_cwes:
+                seen_cwes.add(cwe)
+                findings.append(Finding(
+                    id=f"F-{len(findings) + 1:03d}",
+                    file_path=file_path,
+                    start_line=None,
+                    end_line=None,
+                    cwe=cwe,
+                    severity=Severity.HIGH,
+                    title=title,
+                    explanation=raw[:1500],
+                    snippet=None,
+                ))
+
         return findings
 
 
 class HuggingFaceAnalyzer:
-    """Calls a fine-tuned model on Hugging Face via the Inference API.
+    """Calls a fine-tuned model on Hugging Face via a dedicated Inference Endpoint.
 
-    Use your model's repo id (e.g. username/my-security-model) from the HF link.
-    Set HUGGINGFACE_HUB_TOKEN or HF_TOKEN in the environment.
+    Supports both dedicated endpoints (OpenAI-compatible vLLM/TGI) and the
+    serverless Inference API.  Set HF_ENDPOINT_URL for a dedicated endpoint,
+    or fall back to the serverless router.
     """
 
     def __init__(
         self,
         model_id: str,
         token: str | None = None,
+        endpoint_url: str | None = None,
         max_retries: int = 5,
         retry_delay: float = 5.0,
         max_new_tokens: int = 1024,
@@ -207,6 +273,7 @@ class HuggingFaceAnalyzer:
             raise ValueError(
                 "Hugging Face Inference API requires a token. Set HUGGINGFACE_HUB_TOKEN or HF_TOKEN."
             )
+        self._endpoint_url = (endpoint_url or os.getenv("HF_ENDPOINT_URL", "")).strip().rstrip("/")
         self._max_retries = max_retries
         self._retry_delay = retry_delay
         self._max_new_tokens = max_new_tokens
@@ -217,51 +284,70 @@ class HuggingFaceAnalyzer:
         return AnalyzerOutput(findings=findings, raw_response=raw, model_id=self._model_id)
 
     def _call_model(self, code: str) -> str:
-        prompt = (
-            f"{ANALYZER_SYSTEM_PROMPT}\n\n"
-            f"Analyze this code for security vulnerabilities:\n\n```\n{code}\n```"
-        )
-        url = f"{HF_INFERENCE_URL}/{self._model_id}"
-        headers = {"Authorization": f"Bearer {self._token}"}
+        if self._endpoint_url:
+            return self._call_endpoint(code)
+        return self._call_serverless(code)
+
+    def _call_endpoint(self, code: str) -> str:
+        """Call a dedicated HF Inference Endpoint (OpenAI-compatible chat API)."""
+        url = f"{self._endpoint_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
         payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": self._max_new_tokens,
-                "return_full_text": False,
-                "temperature": 0.2,
-            },
+            "model": self._model_id,
+            "messages": [
+                {"role": "user", "content": f"analyze this code for security violations:\n\n{code}"},
+            ],
+            "max_tokens": self._max_new_tokens,
+            "temperature": 0.0,
         }
 
         for attempt in range(self._max_retries):
             try:
-                with httpx.Client(timeout=60.0) as client:
+                with httpx.Client(timeout=120.0) as client:
                     response = client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
-                if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
-                    return data[0]["generated_text"].strip()
-                if isinstance(data, dict):
-                    if "error" in data:
-                        raise RuntimeError(data["error"])
-                    if "generated_text" in data:
-                        return data["generated_text"].strip()
-                return json.dumps({"findings": [], "error": "Unexpected HF response format"})
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 503:
-                    msg = e.response.text or "Model loading"
-                    if attempt == self._max_retries - 1:
-                        logger.error("HF model still loading after %d attempts: %s", self._max_retries, msg)
-                        return json.dumps({"findings": [], "error": msg})
-                    logger.warning("Attempt %d: %s — retrying in %.1fs", attempt + 1, msg, self._retry_delay)
-                    time.sleep(self._retry_delay)
-                else:
-                    logger.error("HF Inference API error %s: %s", e.response.status_code, e.response.text)
-                    return json.dumps({"findings": [], "error": str(e)})
+                content = data["choices"][0]["message"]["content"].strip()
+                logger.debug("Endpoint raw response (first 500 chars): %s", content[:500])
+                return content
             except Exception as e:
+                err = f"{type(e).__name__}: {e}"
                 if attempt == self._max_retries - 1:
-                    logger.error("HuggingFace analyzer failed after %d attempts: %s", self._max_retries, e)
-                    return json.dumps({"findings": [], "error": str(e)})
-                logger.warning("Attempt %d failed: %s — retrying in %.1fs", attempt + 1, e, self._retry_delay)
+                    logger.error("Endpoint call failed after %d attempts: %s", self._max_retries, err)
+                    return json.dumps({"findings": [], "error": err})
+                logger.warning("Attempt %d: %s — retrying in %.1fs", attempt + 1, err[:200], self._retry_delay)
+                time.sleep(self._retry_delay)
+
+        return json.dumps({"findings": []})
+
+    def _call_serverless(self, code: str) -> str:
+        """Fallback: call via HF serverless Inference API."""
+        from huggingface_hub import InferenceClient
+
+        prompt = (
+            f"{ANALYZER_SYSTEM_PROMPT}\n\n"
+            f"Analyze this code for security vulnerabilities:\n\n```\n{code}\n```"
+        )
+
+        hf_client = InferenceClient(model=self._model_id, token=self._token, timeout=120)
+
+        for attempt in range(self._max_retries):
+            try:
+                result = hf_client.text_generation(
+                    prompt,
+                    max_new_tokens=self._max_new_tokens,
+                    temperature=0.2,
+                )
+                return result.strip()
+            except Exception as e:
+                err = f"{type(e).__name__}: {e}"
+                if attempt == self._max_retries - 1:
+                    logger.error("HF serverless failed after %d attempts: %s", self._max_retries, err)
+                    return json.dumps({"findings": [], "error": err})
+                logger.warning("Attempt %d: %s — retrying in %.1fs", attempt + 1, err[:200], self._retry_delay)
                 time.sleep(self._retry_delay)
 
         return json.dumps({"findings": []})
