@@ -1,87 +1,84 @@
-#!/usr/bin/env python3
-"""
-Merge and split datasets with proper shuffling.
-This script combines paired GitHub+BigVul data with SARD data,
-shuffles them together with a fixed seed, and splits into train/val/test sets.
-"""
-
-import os
 import json
 import random
-from typing import List, Dict, Any
+import os
 
-def load_jsonl_file(filepath: str) -> List[Dict[str, Any]]:
-    """Load JSONL file into a list of dictionaries."""
-    data = []
-    with open(filepath, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
-                try:
-                    data.append(json.loads(line))
-                except json.JSONDecodeError:
-                    print(f"Warning: Could not decode line: {line[:50]}...")
-    return data
-
-def save_jsonl_file(data: List[Dict[str, Any]], filepath: str) -> None:
-    """Save list of dictionaries to JSONL file."""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        for item in data:
-            f.write(json.dumps(item) + '\n')
-
-def merge_and_split_datasets(paired_data_file: str, sard_data_file: str, output_dir: str, random_seed: int = 42) -> None:
+def process_and_split():
     """
-    Merge paired GitHub+BigVul data with SARD data, shuffle, and split into train/val/test sets.
-    
-    Args:
-        paired_data_file: Path to the paired GitHub+BigVul JSONL file
-        sard_data_file: Path to the SARD dataset JSONL file
-        output_dir: Directory to save train/val/test splits
-        random_seed: Random seed for reproducible shuffling
+    The 'Brain' of the pipeline:
+    1. Loads raw data from all sources.
+    2. Pairs GitHub Advisories with BigVul samples using CWE IDs.
+    3. Formats everything into Mistral-compatible ChatML format.
+    4. Merges with SARD synthetic data.
+    5. Applies a global shuffle and splits into Train/Val/Test sets.
     """
-    print("Loading paired GitHub+BigVul data...")
-    paired_data = load_jsonl_file(paired_data_file)
-    print(f"Loaded {len(paired_data)} paired examples")
-    
-    print("Loading SARD data...")
-    sard_data = load_jsonl_file(sard_data_file)
-    print(f"Loaded {len(sard_data)} SARD examples")
-    
-    # Combine datasets
-    combined_data = paired_data + sard_data
-    print(f"Combined dataset size: {len(combined_data)} examples")
-    
-    # Shuffle with fixed seed for reproducibility
-    print(f"Shuffling combined dataset with seed {random_seed}...")
-    random.seed(random_seed)
-    random.shuffle(combined_data)
-    
-    # Split into train/val/test (80/10/10)
-    total_size = len(combined_data)
-    train_size = int(0.8 * total_size)
-    val_size = int(0.1 * total_size)
-    
-    train_data = combined_data[:train_size]
-    val_data = combined_data[train_size:train_size + val_size]
-    test_data = combined_data[train_size + val_size:]
-    
-    print(f"Dataset splits:")
-    print(f"  Train: {len(train_data)} examples ({len(train_data)/total_size:.1%})")
-    print(f"  Val: {len(val_data)} examples ({len(val_data)/total_size:.1%})")
-    print(f"  Test: {len(test_data)} examples ({len(test_data)/total_size:.1%})")
-    
-    # Save splits
-    print(f"Saving splits to {output_dir}...")
-    save_jsonl_file(train_data, os.path.join(output_dir, "train.jsonl"))
-    save_jsonl_file(val_data, os.path.join(output_dir, "val.jsonl"))
-    save_jsonl_file(test_data, os.path.join(output_dir, "test.jsonl"))
-    
-    print("Dataset merging and splitting complete!")
+    print("Starting data processing and pairing...")
+
+    # Define absolute paths relative to the script location
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "data")
+    output_dir = os.path.join(base_dir, "dataset")
+
+    # 1. Load Raw Data
+    github_path = os.path.join(data_dir, "raw_github.json")
+    bigvul_path = os.path.join(data_dir, "raw_bigvul.json")
+    sard_path = os.path.join(data_dir, "raw_sard.json")
+
+    with open(github_path, "r") as f: github = json.load(f)
+    with open(bigvul_path, "r") as f: bigvul = json.load(f)
+    with open(sard_path, "r") as f: sard = json.load(f)
+
+    unified_dataset = []
+
+    # 2. Logic: Pair GitHub Advisories with BigVul by CWE
+    # Create a map to quickly look up BigVul samples by their violation type (CWE)
+    cwe_map = {}
+    for item in bigvul:
+        cwe = str(item.get("violation_type", "")).strip()
+        if cwe not in cwe_map:
+            cwe_map[cwe] = []
+        cwe_map[cwe].append(item)
+
+    # For each advisory, find matching code samples and format into a conversation
+    for adv in github:
+        for cwe in adv["cwes"]:
+            if cwe in cwe_map:
+                # Pick a random sample for this specific CWE to ensure variety
+                sample = random.choice(cwe_map[cwe])
+
+                # Format into Mistral ChatML structure
+                unified_dataset.append({
+                    "messages": [
+                        {"role": "system", "content": "You are a senior security researcher analyzing code for vulnerabilities."},
+                        {"role": "user", "content": f"Analyze this code for {adv['summary']}:\n\n{sample['vulnerable_code']}"},
+                        {"role": "assistant", "content": f"VIOLATION: {cwe}\nREASON: {adv['description']}\nFIX:\n{sample['safe_code']}"}
+                    ]
+                })
+
+    # 3. Add SARD data (already in conversational format)
+    unified_dataset.extend(sard)
+
+    # 4. Global Shuffle & Split (The Golden Rule of Data Science)
+    # Using a fixed seed (42) ensures reproducible splits
+    random.seed(42)
+    random.shuffle(unified_dataset)
+
+    n = len(unified_dataset)
+    train_end = int(n * 0.8)
+    val_end = int(n * 0.9)
+
+    train = unified_dataset[:train_end]
+    val = unified_dataset[train_end:val_end]
+    test = unified_dataset[val_end:]
+
+    # 5. Export to JSONL (one JSON object per line)
+    os.makedirs(output_dir, exist_ok=True)
+    for name, data in [("train", train), ("val", val), ("test", test)]:
+        file_path = os.path.join(output_dir, f"{name}.jsonl")
+        with open(file_path, "w") as f:
+            for entry in data:
+                f.write(json.dumps(entry) + "\n")
+
+    print(f"FINAL DATASET READY: {len(train)} train, {len(val)} val, {len(test)} test.")
 
 if __name__ == "__main__":
-    # Default paths when running standalone
-    paired_file = os.path.join("ai_pipeline", "paired_data.json")
-    sard_file = os.path.join("ai_pipeline", "chat_dataset.jsonl")
-    output_dir = os.path.join("ai_pipeline", "dataset")
-    
-    merge_and_split_datasets(paired_file, sard_file, output_dir)
+    process_and_split()

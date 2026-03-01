@@ -1,47 +1,55 @@
-#%%
 import pandas as pd
+import json
+import os
 
-# Load the bigvul data
-splits = {'train': 'data/train-00000-of-00001-c6410a8bb202ca06.parquet',
-          'validation': 'data/validation-00000-of-00001-d21ad392180d1f79.parquet',
-          'test': 'data/test-00000-of-00001-d20b0e7149fa6eeb.parquet'}
-df = pd.read_parquet("hf://datasets/bstee615/bigvul/" + splits["train"])
-
-
-def get_stratified_sample(df, sample_size):
-    # Calculate the proportion of each class
-    subset_df = df.groupby('vul', group_keys=False).apply(
-        lambda x: x.sample(n=max(1, int(sample_size * len(x) / len(df)))),
-        include_groups=False
-    )
-
-    return subset_df
-
-subset_df = get_stratified_sample(df, 100)
-
-def process_to_json(df, num_rows=50):
+def fetch_bigvul_raw(sample_size=1000):
     """
-    Converts the BigVul DataFrame into a structured format for Mistral fine-tuning.
+    Fetches the BigVul dataset directly from Hugging Face using pandas.
+    Extracts raw columns and saves them to a local JSON for processing.
     """
-    output_data = []
-    subset_df = df.head(num_rows)
+    # Absolute path setup
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    save_path = os.path.join(base_dir, "data", "raw_bigvul.json")
 
-    for _, row in subset_df.iterrows():
-        # 'vul' column indicates if the code is vulnerable (1) or a patch/safe (0)
-        is_vulnerable = row.get('vul')
+    # Hugging Face dataset path
+    hf_path = "hf://datasets/bstee615/bigvul/data/train-00000-of-00001-c6410a8bb202ca06.parquet"
 
-        # Construct the JSON object
-        entry = {
-            "violation_type": str(row.get('CWE ID', 'security_flaw')),
-            "severity": "critical" if is_vulnerable == 1 else "low",
-            "vulnerable_code": row['func_before'],
-            "explanation": f"{row.get('commit_message', 'N/A')}",
-            "risk": " ",
-            "compliant_patch": row['func_after']
-        }
-        output_data.append(entry)
+    print(f" > Downloading BigVul dataset from Hugging Face...")
 
-    return output_data
+    try:
+        # Load parquet directly from the web
+        df = pd.read_parquet(hf_path)
 
+        # Original script used stratified sampling, let's take a safe sample to avoid memory issues
+        # and ensure we have a good mix of vulnerable (1) and safe (0) code.
+        if len(df) > sample_size:
+            df = df.sample(n=sample_size, random_state=42)
 
-data = process_to_json(subset_df)
+        # Map raw columns to our internal names for the Brain (Step 4)
+        # CWE ID -> violation_type
+        # func_before -> vulnerable_code
+        # func_after -> safe_code
+        raw_data = []
+        for _, row in df.iterrows():
+            raw_data.append({
+                "violation_type": str(row.get('CWE ID', 'security_flaw')),
+                "vulnerable_code": row.get('func_before', ''),
+                "safe_code": row.get('func_after', ''),
+                "vul": row.get('vul', 0)
+            })
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+        # Save to raw JSON
+        with open(save_path, "w") as f:
+            json.dump(raw_data, f)
+
+        print(f"Successfully downloaded and saved {len(raw_data)} BigVul samples.")
+
+    except Exception as e:
+        print(f"Failed to fetch BigVul from Hugging Face: {e}")
+        print("Make sure you have 'fsspec' and 'huggingface_hub' installed: pip install fsspec huggingface_hub")
+
+if __name__ == "__main__":
+    fetch_bigvul_raw()
