@@ -1,0 +1,73 @@
+{
+  "base_metrics": {
+    "overall": {
+      "avg": 1.55,
+      "min": 1,
+      "max": 3
+    },
+    "vulnerability_identification": {
+      "avg": 1.9,
+      "min": 1,
+      "max": 4
+    },
+    "severity_accuracy": {
+      "avg": 1.6,
+      "min": 1,
+      "max": 3
+    },
+    "explanation_quality": {
+      "avg": 2.05,
+      "min": 1,
+      "max": 4
+    },
+    "fix_suggestion": {
+      "avg": 1.4,
+      "min": 1,
+      "max": 3
+    },
+    "relevance": {
+      "avg": 1.5,
+      "min": 1,
+      "max": 3
+    },
+    "pct_good": 0.0,
+    "pct_poor": 90.0
+  },
+  "finetuned_metrics": {
+    "overall": {
+      "avg": 1.81,
+      "min": 1,
+      "max": 4
+    },
+    "vulnerability_identification": {
+      "avg": 2.31,
+      "min": 1,
+      "max": 5
+    },
+    "severity_accuracy": {
+      "avg": 2.62,
+      "min": 1,
+      "max": 5
+    },
+    "explanation_quality": {
+      "avg": 1.94,
+      "min": 1,
+      "max": 3
+    },
+    "fix_suggestion": {
+      "avg": 1.44,
+      "min": 1,
+      "max": 3
+    },
+    "relevance": {
+      "avg": 1.25,
+      "min": 1,
+      "max": 3
+    },
+    "pct_good": 6.2,
+    "pct_poor": 81.2
+  },
+  "base_n": 20,
+  "finetuned_n": 16,
+  "delta_overall": 0.26
+}

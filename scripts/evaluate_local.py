@@ -1,22 +1,24 @@
-#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "torch",
+#     "transformers>=4.46.0",
+#     "peft>=0.13.0",
+#     "bitsandbytes",
+#     "accelerate",
+#     "sentencepiece",
 #     "google-genai",
-#     "huggingface_hub",
 # ]
 # ///
 """
-Score inference results using Gemini as an LLM-as-judge.
+Evaluate fine-tuned LoRA model locally with Gemini as judge.
 
-Downloads inference_results.json from HF dataset repo, sends each result
-to Gemini for scoring on 5 security-analysis dimensions, then generates
-a markdown report and JSON metrics file.
+Loads base Ministral-8B + LoRA adapter, runs inference on test set,
+then uses Gemini to score each response on 5 dimensions.
 
 Usage:
     export GEMINI_API_KEY="..."
-    uv run python scripts/judge_gemini.py
-    uv run python scripts/judge_gemini.py --sample-size 50 --gemini-model gemini-2.0-flash
+    uv run python scripts/evaluate_local.py --sample-size 10
 """
 
 from __future__ import annotations
@@ -25,14 +27,16 @@ import argparse
 import json
 import os
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
+import torch
 from google import genai
-from huggingface_hub import HfApi, hf_hub_download, login
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 # ---------------------------------------------------------------------------
-# Judge rubric (same as evaluate_local.py for consistency)
+# Judge rubric
 # ---------------------------------------------------------------------------
 JUDGE_SYSTEM = """\
 You are an expert security auditor evaluating AI-generated vulnerability analyses.
@@ -64,30 +68,106 @@ Return ONLY valid JSON (no markdown fences):
 
 
 @dataclass
-class JudgedResult:
+class EvalResult:
     index: int
     code_snippet: str
     ground_truth: str
     model_response: str
-    latency_ms: float
     scores: dict[str, float] = field(default_factory=dict)
     judge_reasoning: str = ""
     error: str = ""
+    latency_ms: float = 0.0
 
 
-def download_inference_results(dataset_repo: str, token: str) -> list[dict]:
-    """Download inference_results.json from HF dataset repo."""
-    print(f"Downloading inference results from {dataset_repo}...")
-    path = hf_hub_download(
-        repo_id=dataset_repo,
-        filename="eval/inference_results.json",
-        repo_type="dataset",
-        token=token,
-    )
+def load_test_data(path: str) -> list[dict]:
+    """Load test examples from JSONL."""
+    data: list[dict] = []
     with Path(path).open(encoding="utf-8") as f:
-        results = json.load(f)
-    print(f"  Loaded {len(results)} inference results.")
-    return results
+        for line in f:
+            entry = json.loads(line)
+            messages = entry["messages"]
+            user_msg = next(m["content"] for m in messages if m["role"] == "user")
+            assistant_msg = next(
+                m["content"] for m in messages if m["role"] == "assistant"
+            )
+            system_msg = next(
+                (m["content"] for m in messages if m["role"] == "system"),
+                "You are a senior security engineer. Analyze the provided codebase snippet and output a detailed vulnerability explanation.",
+            )
+            data.append({
+                "system": system_msg,
+                "user": user_msg,
+                "ground_truth": assistant_msg,
+            })
+    return data
+
+
+def load_model(base_model: str, adapter_path: str, device: str):
+    """Load base model + LoRA adapter."""
+    print(f"Loading tokenizer from {adapter_path}...")
+    tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    print(f"Loading base model: {base_model}...")
+    if device == "mps":
+        # MPS: no bitsandbytes, no device_map="auto" (causes accelerate bug)
+        # Load to CPU first, attach LoRA, then move to MPS
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model, torch_dtype=torch.float16
+        )
+        print(f"Loading LoRA adapter from {adapter_path}...")
+        model = PeftModel.from_pretrained(model, adapter_path)
+        print("Moving model to MPS...")
+        model = model.to("mps")
+    else:
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model, quantization_config=bnb_config, device_map="auto"
+        )
+        print(f"Loading LoRA adapter from {adapter_path}...")
+        model = PeftModel.from_pretrained(model, adapter_path)
+    model.eval()
+
+    return model, tokenizer
+
+
+def generate_response(
+    model, tokenizer, system: str, user: str, max_new_tokens: int = 1024
+) -> tuple[str, float]:
+    """Generate a response from the fine-tuned model."""
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=2048)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+    t0 = time.monotonic()
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+    latency = (time.monotonic() - t0) * 1000
+
+    # Decode only the new tokens
+    new_tokens = outputs[0][inputs["input_ids"].shape[1] :]
+    response = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    return response.strip(), latency
 
 
 def judge_with_gemini(
@@ -97,7 +177,7 @@ def judge_with_gemini(
     ground_truth: str,
     candidate: str,
     *,
-    max_retries: int = 6,
+    max_retries: int = 3,
 ) -> dict:
     """Use Gemini to score the candidate response."""
     prompt = f"""\
@@ -126,6 +206,7 @@ Score the candidate response on all dimensions. Return ONLY valid JSON."""
                 ],
             )
             text = response.text or "{}"
+            # Strip markdown fences if present
             text = text.strip()
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -136,27 +217,14 @@ Score the candidate response on all dimensions. Return ONLY valid JSON."""
                 text = text[4:].strip()
             return json.loads(text)
         except (json.JSONDecodeError, Exception) as e:
-            err_str = str(e)
-            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
             if attempt == max_retries - 1:
-                return {"error": err_str, "overall": 1}
-            # Aggressive backoff for rate limits: 60s, 120s, 180s...
-            # Normal errors: 4s, 8s, 12s...
-            if is_rate_limit:
-                wait = 60 * (attempt + 1)
-                print(
-                    f"    Rate limited, waiting {wait}s (attempt {attempt + 1}/{max_retries})...",
-                    flush=True,
-                )
-            else:
-                wait = 4 * (attempt + 1)
-                print(f"    Error: {err_str[:80]}, retrying in {wait}s...", flush=True)
-            time.sleep(wait)
+                return {"error": str(e), "overall": 1}
+            time.sleep(2 * (attempt + 1))
     return {"error": "max retries", "overall": 1}
 
 
-def compute_metrics(results: list[JudgedResult]) -> dict[str, float]:
-    """Aggregate scores across all judged results."""
+def compute_metrics(results: list[EvalResult]) -> dict[str, float]:
+    """Aggregate scores."""
     valid = [r for r in results if not r.error]
     if not valid:
         return {"num_evaluated": len(results), "num_errors": len(results)}
@@ -193,24 +261,17 @@ def compute_metrics(results: list[JudgedResult]) -> dict[str, float]:
         metrics["pct_poor"] = round(
             sum(1 for v in overall_vals if v <= 2) / len(overall_vals), 3
         )
-
-    # Average latency
-    latencies = [r.latency_ms for r in valid if r.latency_ms > 0]
-    if latencies:
-        metrics["avg_latency_ms"] = round(sum(latencies) / len(latencies), 1)
-
     return metrics
 
 
-def generate_report(metrics: dict, results: list[JudgedResult], iteration: int) -> str:
+def generate_report(metrics: dict, results: list[EvalResult], iteration: int) -> str:
     """Generate a markdown evaluation report."""
     lines = [
         "# Security Model Evaluation Report",
         f"**Iteration:** {iteration}",
-        "**Model:** Ministral-8B + LoRA (security-scan-lora:v0)",
-        "**Judge:** Gemini",
+        f"**Model:** Ministral-8B + LoRA (security-scan-lora:v0)",
+        f"**Judge:** Gemini",
         f"**Samples evaluated:** {metrics.get('num_valid', 0)}/{metrics.get('num_evaluated', 0)}",
-        f"**Avg latency:** {metrics.get('avg_latency_ms', 'N/A')}ms",
         "",
         "## Overall Scores (1-5 scale)",
         "",
@@ -245,9 +306,9 @@ def generate_report(metrics: dict, results: list[JudgedResult], iteration: int) 
         lines.extend([
             f"### Example {r.index + 1} (overall: {overall}/5, latency: {r.latency_ms:.0f}ms)",
             "",
-            f"**Code snippet:** `{r.code_snippet[:120]}...`",
+            f"**Code snippet:** `{r.code_snippet[:100]}...`",
             "",
-            f"**Model response:** {r.model_response[:400]}...",
+            f"**Model response:** {r.model_response[:300]}...",
             "",
             f"**Judge reasoning:** {r.judge_reasoning}",
             "",
@@ -265,97 +326,83 @@ def generate_report(metrics: dict, results: list[JudgedResult], iteration: int) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Score inference results with Gemini judge"
-    )
-    parser.add_argument(
-        "--dataset-repo",
-        default=None,
-        help="HF dataset repo with inference_results.json (default: <username>/security-vuln-dataset)",
-    )
-    parser.add_argument(
-        "--gemini-model",
-        default="gemini-2.5-flash",
-        help="Gemini model to use as judge",
-    )
-    parser.add_argument(
-        "--iteration", type=int, default=1, help="Iteration number for the report"
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="ai_pipeline/eval_results",
-        help="Directory for evaluation output files",
-    )
-    parser.add_argument(
-        "--local-file",
-        default=None,
-        help="Use a local inference_results.json instead of downloading from HF",
-    )
+    parser = argparse.ArgumentParser(description="Local eval with Gemini judge")
+    parser.add_argument("--base-model", default="mistralai/Ministral-8B-Instruct-2410")
+    parser.add_argument("--adapter-path", default="ai_pipeline/lora_adapter")
+    parser.add_argument("--test-data", default="ai_pipeline/dataset/test.jsonl")
+    parser.add_argument("--sample-size", type=int, default=10)
+    parser.add_argument("--iteration", type=int, default=1)
+    parser.add_argument("--gemini-model", default="gemini-2.0-flash")
+    parser.add_argument("--output-dir", default="ai_pipeline/eval_results")
     args = parser.parse_args()
 
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
-        print("Error: GEMINI_API_KEY environment variable is required.")
+        print("Error: GEMINI_API_KEY environment variable required.")
         raise SystemExit(1)
 
-    # Get HF token (needed for downloading results unless --local-file)
-    hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        token_path = Path.home() / ".cache" / "huggingface" / "token"
-        if token_path.exists():
-            hf_token = token_path.read_text().strip()
-
-    # Download or load inference results
-    if args.local_file:
-        print(f"Loading local inference results from {args.local_file}...")
-        with Path(args.local_file).open(encoding="utf-8") as f:
-            raw_results = json.load(f)
+    # Determine device
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
     else:
-        if not hf_token:
-            print("Error: HF_TOKEN required to download results from HF Hub.")
-            raise SystemExit(1)
-        login(token=hf_token)
-        api = HfApi(token=hf_token)
-        username = api.whoami()["name"]
-        dataset_repo = args.dataset_repo or f"{username}/security-vuln-dataset"
-        raw_results = download_inference_results(dataset_repo, hf_token)
+        device = "cpu"
+    print(f"Using device: {device}")
 
-    print(f"\nScoring {len(raw_results)} results with {args.gemini_model}...")
+    if device == "mps":
+        print("NOTE: MPS cannot use 4-bit quantization. Loading in float16.")
+        print("  Ministral-8B in fp16 needs ~16GB. Your M4 24GB should handle it.")
+
+    # Load model
+    model, tokenizer = load_model(args.base_model, args.adapter_path, device)
+    print(f"Model loaded on {model.device}")
+
+    # Init Gemini
     gemini_client = genai.Client(api_key=gemini_key)
 
-    judged: list[JudgedResult] = []
-    for i, result in enumerate(raw_results):
-        print(
-            f"\n[{i + 1}/{len(raw_results)}] Judging example {result.get('index', i)}..."
+    # Load test data
+    test_data = load_test_data(args.test_data)
+    subset = test_data[: args.sample_size]
+    print(f"\nEvaluating {len(subset)} test examples...")
+
+    results: list[EvalResult] = []
+    for i, example in enumerate(subset):
+        print(f"\n[{i + 1}/{len(subset)}] Generating response...")
+
+        # Get model response
+        response, latency = generate_response(
+            model, tokenizer, example["system"], example["user"]
         )
+        print(f"  Response ({latency:.0f}ms): {response[:100]}...")
+
+        # Judge with Gemini
+        print("  Judging with Gemini...")
         scores = judge_with_gemini(
             gemini_client,
             args.gemini_model,
-            code=result["code_snippet"],
-            ground_truth=result["ground_truth"],
-            candidate=result["model_response"],
+            code=example["user"],
+            ground_truth=example["ground_truth"],
+            candidate=response,
         )
 
-        jr = JudgedResult(
-            index=result.get("index", i),
-            code_snippet=result["code_snippet"],
-            ground_truth=result["ground_truth"],
-            model_response=result["model_response"],
-            latency_ms=result.get("latency_ms", 0.0),
+        result = EvalResult(
+            index=i,
+            code_snippet=example["user"][:500],
+            ground_truth=example["ground_truth"][:500],
+            model_response=response[:500],
             scores={k: v for k, v in scores.items() if k not in ("reasoning", "error")},
             judge_reasoning=scores.get("reasoning", ""),
             error=scores.get("error", ""),
+            latency_ms=latency,
         )
-        judged.append(jr)
+        results.append(result)
 
         overall = scores.get("overall", "?")
-        print(f"  Score: {overall}/5 — {scores.get('reasoning', '')[:100]}")
-
-        # Rate limit: be very conservative with free tier quotas (30s gap = ~2 RPM)
-        time.sleep(30)
+        print(f"  Score: {overall}/5 — {scores.get('reasoning', '')[:80]}")
 
     # Compute metrics
-    metrics = compute_metrics(judged)
+    metrics = compute_metrics(results)
     print(f"\n{'=' * 60}")
     print("EVALUATION METRICS")
     print(f"{'=' * 60}")
@@ -372,19 +419,16 @@ def main() -> None:
             {
                 "iteration": args.iteration,
                 "metrics": metrics,
-                "results": [asdict(r) for r in judged],
+                "results": [asdict(r) for r in results],
             },
             indent=2,
         ),
         encoding="utf-8",
     )
 
-    report = generate_report(metrics, judged, args.iteration)
+    report = generate_report(metrics, results, args.iteration)
     report_path = out_dir / f"report_iter_{args.iteration}.md"
     report_path.write_text(report, encoding="utf-8")
-
-    # Judge results saved locally only — do NOT upload to HF dataset repo
-    # because the different JSON schema breaks load_dataset().
 
     print(f"\nResults saved to: {results_path}")
     print(f"Report saved to: {report_path}")

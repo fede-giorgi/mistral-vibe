@@ -1,0 +1,369 @@
+{
+  "metrics": {
+    "num_evaluated": 20,
+    "num_valid": 20,
+    "num_errors": 0,
+    "avg_vulnerability_identification": 1.9,
+    "min_vulnerability_identification": 1,
+    "max_vulnerability_identification": 4,
+    "avg_severity_accuracy": 1.6,
+    "min_severity_accuracy": 1,
+    "max_severity_accuracy": 3,
+    "avg_explanation_quality": 2.05,
+    "min_explanation_quality": 1,
+    "max_explanation_quality": 4,
+    "avg_fix_suggestion": 1.4,
+    "min_fix_suggestion": 1,
+    "max_fix_suggestion": 3,
+    "avg_relevance": 1.5,
+    "min_relevance": 1,
+    "max_relevance": 3,
+    "avg_overall": 1.55,
+    "min_overall": 1,
+    "max_overall": 3,
+    "pct_good": 0.0,
+    "pct_poor": 0.9
+  },
+  "results": [
+    {
+      "index": 0,
+      "scores": {
+        "vulnerability_identification": 2,
+        "severity_accuracy": 1,
+        "explanation_quality": 2,
+        "fix_suggestion": 2,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response analyzes PHP code for XSS vulnerabilities, completely missing the context of the actual Svelte vulnerability described in the ground truth. While they correctly identify XSS as a vulnerability class, their analysis, explanation, and suggestions are not relevant to the specific Svelte vulnerability related to improper escaping of 'hydratable' keys.",
+      "error": "",
+      "judge_time_s": 58.8,
+      "code_snippet": "Analyze this code for svelte vulnerable to Cross-site Scripting:\n\nSAPI_API SAPI_POST_READER_FUNC(sapi_read_standard_form_data)\n{\n\tint read_bytes;\n\tint allocated_bytes=SAPI_POST_BLOCK_SIZE+1;\n\n\tif ((SG",
+      "model_response_preview": "The provided code snippet appears to be a function from a SAPI (Server Application Programming Interface) module in PHP, specifically dealing with reading POST data. The function `sapi_read_standard_f",
+      "inference_latency_ms": 70413.95557700003
+    },
+    {
+      "index": 1,
+      "scores": {
+        "vulnerability_identification": 3,
+        "severity_accuracy": 3,
+        "explanation_quality": 3,
+        "fix_suggestion": 3,
+        "relevance": 2,
+        "overall": 3
+      },
+      "reasoning": "The candidate correctly identifies XSS as a potential vulnerability but fails to address the specific context of the Snipe-IT 'Country' field vulnerability mentioned in the ground truth. The analysis is too generic and doesn't provide specific details about the actual vulnerability or a targeted fix.",
+      "error": "",
+      "judge_time_s": 32.6,
+      "code_snippet": "Analyze this code for Snipe-IT allows stored XSS via the Locations \"Country\" field:\n\nMetricsWebContentsObserver::GetPageLoadExtraInfoForCommittedLoad() {\n  DCHECK(committed_load_);\n  return committed_",
+      "model_response_preview": "The provided code snippet is part of a method within a class `MetricsWebContentsObserver` in the context of a web browser or similar software. Let's analyze the code to understand its potential securi",
+      "inference_latency_ms": 51886.45136700006
+    },
+    {
+      "index": 2,
+      "scores": {
+        "vulnerability_identification": 3,
+        "severity_accuracy": 3,
+        "explanation_quality": 3,
+        "fix_suggestion": 1,
+        "relevance": 2,
+        "overall": 2
+      },
+      "reasoning": "The candidate provides a general security analysis but fails to identify the specific CWE-918 vulnerability mentioned in the ground truth. While it mentions external URL downloads as a potential issue, it doesn't connect this to the JDA Discord API context or provide specific remediation advice. The analysis is somewhat generic and doesn't address the specific vulnerability context described in the ground truth.",
+      "error": "",
+      "judge_time_s": 44.0,
+      "code_snippet": "Analyze this code for JDA (Java Discord API) downloads external URLs when updating message components:\n\ndaemon_msg_open_req(uint8 ver, struct daemon_slpars *pars, uint32 plen,\n    char *source, size_t",
+      "model_response_preview": "The provided code snippet is a function for handling a daemon message to open a network capture using JDA (Java Discord API). The function `daemon_msg_open_req` processes a message to open a network c",
+      "inference_latency_ms": 50408.29608699994
+    },
+    {
+      "index": 3,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 3,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate analyzed a completely unrelated C function for NIC existence checks instead of addressing the Devtron Attributes API authorization vulnerability (CWE-862). While their explanation of the NIC code was clear, it had no relevance to the actual vulnerability described in the ground truth.",
+      "error": "",
+      "judge_time_s": 226.1,
+      "code_snippet": "Analyze this code for  Devtron Attributes API Unauthorized Access Leading to API Token Signing Key Leakage:\n\nstatic bool nic_exists(char *nic)\n{\n\tchar path[MAXPATHLEN];\n\tint ret;\n\tstruct stat sb;\n\n\tif",
+      "model_response_preview": "The provided code snippet is intended to check if a network interface controller (NIC) exists on a system by examining a path in the `/sys/class/net/` directory. The code contains several potential se",
+      "inference_latency_ms": 69309.80733899992
+    },
+    {
+      "index": 4,
+      "scores": {
+        "vulnerability_identification": 2,
+        "severity_accuracy": 3,
+        "explanation_quality": 3,
+        "fix_suggestion": 2,
+        "relevance": 2,
+        "overall": 2
+      },
+      "reasoning": "The candidate correctly identifies command injection as a vulnerability class but applies it to the wrong code. The ground truth shows the vulnerability is in a Python function 'find_file' in the CAI framework, not in the C function 'vdagent_file_xfers_create' shown in the snippet. The analysis is somewhat clear but incomplete, focusing on parameter storage without examining how it might be used in command execution later. The fix suggestion is incomplete and cut off.",
+      "error": "",
+      "judge_time_s": 99.2,
+      "code_snippet": "Analyze this code for CAI find_file Agent Tool has Command Injection Vulnerability Through Argument Injection:\n\nstruct vdagent_file_xfers *vdagent_file_xfers_create(\n    struct udscs_connection *vdage",
+      "model_response_preview": "The provided code snippet is a function named `vdagent_file_xfers_create` which initializes and returns a structure `vdagent_file_xfers`. The function takes several parameters, including a `const char",
+      "inference_latency_ms": 57618.89335800004
+    },
+    {
+      "index": 5,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response completely misses the actual vulnerability (CWE-532) identified in the ground truth analysis. Instead of analyzing the logging issue in the Rust file (http_auth.rs) where sensitive HMAC secrets are logged, it analyzes a different C function (rend_service_verify_single_onion_poison) that doesn't contain the vulnerability. The response doesn't identify, explain, or suggest fixes for the actual vulnerability.",
+      "error": "",
+      "judge_time_s": 41.6,
+      "code_snippet": "Analyze this code for RustFS's RPC signature verification logs shared secret:\n\nrend_service_verify_single_onion_poison(const rend_service_t* s,\n                                        const or_options",
+      "model_response_preview": "The provided RustFS's RPC signature verification logs shared secret function, `rend_service_verify_single_onion_poison`, appears to be a function that checks the validity of a service's key based on c",
+      "inference_latency_ms": 63150.110455
+    },
+    {
+      "index": 6,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 2,
+        "overall": 1
+      },
+      "reasoning": "The candidate response completely misses the actual vulnerability (CWE-346 related to OpenClaw session tool visibility hardening and Telegram webhook secret fallback) identified in the ground truth. Instead, it focuses on general XMPP message handling issues like logging, memory management, and input validation, which are not the vulnerabilities being evaluated.",
+      "error": "",
+      "judge_time_s": 75.6,
+      "code_snippet": "Analyze this code for OpenClaw session tool visibility hardening and Telegram webhook secret fallback:\n\n_handle_captcha(xmpp_stanza_t *const stanza)\n{\n    xmpp_ctx_t *ctx = connection_get_ctx();\n    c",
+      "model_response_preview": "The provided code snippet appears to be a part of an XMPP (Extensible Messaging and Presence Protocol) server implementation, specifically handling the processing of XMPP stanzas (messages). The code ",
+      "inference_latency_ms": 48050.187091999986
+    },
+    {
+      "index": 7,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response analyzes a C++ code snippet related to browser signin, completely missing the actual CWE-287 authentication bypass vulnerability in the Java cap-go/capacitor-native-biometric library. The analysis doesn't identify the correct vulnerability class, provide accurate severity assessment, offer relevant explanations, suggest appropriate fixes, or address the code containing the actual vulnerability.",
+      "error": "",
+      "judge_time_s": 33.5,
+      "code_snippet": "Analyze this code for cap-go/capacitor-native-biometric Authentication Bypass:\n\nvoid StartSync(const StartSyncArgs& args,\n               OneClickSigninSyncStarter::StartSyncMode start_mode) {\n  if (st",
+      "model_response_preview": "The provided code snippet is part of a function `StartSync` that appears to be related to a biometric authentication process in a browser or mobile application. Here's a security analysis of the code ",
+      "inference_latency_ms": 76620.45993600009
+    },
+    {
+      "index": 8,
+      "scores": {
+        "vulnerability_identification": 2,
+        "severity_accuracy": 1,
+        "explanation_quality": 2,
+        "fix_suggestion": 3,
+        "relevance": 2,
+        "overall": 2
+      },
+      "reasoning": "The candidate response fails to identify the actual integer overflow vulnerability (CWE-190) present in the code according to ground truth. Instead, it focuses on NULL pointer handling and other issues in functions not even present in the snippet. While it identifies some real vulnerability classes generally, it doesn't apply them correctly to this specific code. No severity assessment is provided, explanations are basic, and recommendations are reasonable but not specific to the actual vulnerability.",
+      "error": "",
+      "judge_time_s": 65.7,
+      "code_snippet": "analyze this code for security violations:\n\n#include <inttypes.h> // for PRId64\n#include <stdio.h>\n#include <stdlib.h>\n#include <wctype.h>\n#include \"std_testcase.h\"\n\n#ifndef _WIN32\n#include <wchar.h>\n",
+      "model_response_preview": "The provided code snippet contains several functions for printing different types of data, including integers, floating-point numbers, strings, and hexadecimal values. There are also several functions",
+      "inference_latency_ms": 63411.328410000126
+    },
+    {
+      "index": 9,
+      "scores": {
+        "vulnerability_identification": 4,
+        "severity_accuracy": 2,
+        "explanation_quality": 4,
+        "fix_suggestion": 3,
+        "relevance": 2,
+        "overall": 3
+      },
+      "reasoning": "The candidate correctly identifies RCE through unsafe dynamic imports but doesn't explicitly mention CWE-94. The explanation is clear but lacks severity assessment. Fix suggestions are reasonable but not specific to the vulnerability. The relevance is low as the code snippet (C++ disassembler function) doesn't relate to the RSC server functions or dynamic imports in the ground truth.",
+      "error": "",
+      "judge_time_s": 46.8,
+      "code_snippet": "Analyze this code for @vitejs/plugin-rsc Remote Code Execution through unsafe dynamic imports in RSC server function APIs on development server:\n\nstatic void gen_eob(DisasContext *s)\n{\n    gen_eob_wor",
+      "model_response_preview": "The code snippet you provided is from a function `gen_eob` in a Vite.js plugin for the RSC server. Let's analyze it for potential security vulnerabilities, specifically focusing on Remote Code Executi",
+      "inference_latency_ms": 43473.53968900006
+    },
+    {
+      "index": 10,
+      "scores": {
+        "vulnerability_identification": 3,
+        "severity_accuracy": 2,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 2
+      },
+      "reasoning": "The candidate correctly identified SQL injection as a vulnerability class but applied it to the wrong code snippet. The advisory specifically mentions SQL injection in widget field values, but the candidate analyzed a spatial data conversion function. This fundamental mismatch makes the analysis irrelevant to the actual vulnerability. No fix suggestions were provided, and the severity assessment was unclear.",
+      "error": "",
+      "judge_time_s": 47.2,
+      "code_snippet": "Analyze this code for Duplicate Advisory: terminal42/contao-tablelookupwizard possible SQL injection in widget field value:\n\nwkbConvCompoundCurveToShape(wkbObj *w, shapeObj *shape)\n{\n  int npoints = 0",
+      "model_response_preview": "The provided code is part of a function named `wkbConvCompoundCurveToShape` that processes a compound curve and converts it into a shape object. The function appears to handle WKB (Well-Known Binary) ",
+      "inference_latency_ms": 53889.22550500001
+    },
+    {
+      "index": 11,
+      "scores": {
+        "vulnerability_identification": 3,
+        "severity_accuracy": 2,
+        "explanation_quality": 3,
+        "fix_suggestion": 1,
+        "relevance": 2,
+        "overall": 2
+      },
+      "reasoning": "The candidate identifies a potential security issue related to egress traffic but fails to connect the specific code snippet to the CWE-284 vulnerability described in the ground truth. The analysis focuses on the NDP flag setting function rather than the broader policy configuration issue. No complete fix suggestion is provided, and the severity assessment is vague. The response analyzes the code but doesn't adequately address the specific vulnerability of misconfigured toGroups in policies.",
+      "error": "",
+      "judge_time_s": 47.6,
+      "code_snippet": "Analyze this code for Cilium with misconfigured toGroups in policies can lead to unrestricted egress traffic:\n\nvoid ndp_msgra_flag_home_agent_set(struct ndp_msgra *msgra,\n\t\t\t\t   bool flag_home_agent)\n",
+      "model_response_preview": "The code snippet you've provided is from Cilium, and it appears to be a function that sets a flag for the Home Agent in a Neighbor Discovery Protocol (NDP) message. The function `ndp_msgra_flag_home_a",
+      "inference_latency_ms": 65654.21423299995
+    },
+    {
+      "index": 12,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response completely fails to identify the actual vulnerability (CWE-284 - Improper Access Control in Mattermost boards). Instead, it analyzes a TCPv6 initialization function and discusses general security considerations unrelated to the permission validation issue. The response doesn't address the specific vulnerability, its severity, root cause, or provide any relevant fix suggestions. The analysis is entirely off-topic and shows no understanding of the actual security issue in the code.",
+      "error": "",
+      "judge_time_s": 29.5,
+      "code_snippet": "Analyze this code for Mattermost fails to validate user permissions in Boards:\n\nint __init tcpv6_init(void)\n{\n\tint ret;\n\n\tret = inet6_add_protocol(&tcpv6_protocol, IPPROTO_TCP);\n\tif (ret)\n\t\tgoto out;\n",
+      "model_response_preview": "The provided code snippet appears to be related to the initialization of the TCP over IPv6 (TCPv6) protocol in a networking stack, likely for a system or a network service. This function `__init tcpv6",
+      "inference_latency_ms": 34012.060324000005
+    },
+    {
+      "index": 13,
+      "scores": {
+        "vulnerability_identification": 3,
+        "severity_accuracy": 2,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 2,
+        "overall": 2
+      },
+      "reasoning": "The candidate correctly identifies Stored XSS as a potential vulnerability, matching the CWE-79 in the ground truth. However, the analysis is generic to PHP POST data handling rather than specifically addressing the OpenClaw Control UI script injection issue. The explanation lacks specificity about how the code relates to the vulnerability, doesn't cite specific lines or root causes, and provides no remediation suggestions. The response doesn't connect the code analysis to the specific context of assistant name/avatar injection into inline script tags.",
+      "error": "",
+      "judge_time_s": 33.6,
+      "code_snippet": "Analyze this code for OpenClaw affected by Stored XSS in Control UI via unsanitized assistant name/avatar in inline script injection:\n\nSAPI_API SAPI_POST_READER_FUNC(sapi_read_standard_form_data)\n{\n\ti",
+      "model_response_preview": "The provided code appears to be a part of a function handling POST data in a PHP application. The code is responsible for reading POST data and storing it in a buffer. While the code does perform some",
+      "inference_latency_ms": 76874.88748800001
+    },
+    {
+      "index": 14,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate completely missed the actual CWE-22 path traversal vulnerability in the DAG creation functionality of the Dagu system. Instead, they focused on an unrelated C function 'read_fatal' that was only mentioned in the snippet. The candidate provided a general explanation of path traversal vulnerabilities but failed to analyze the specific vulnerability in the Dagu system or provide relevant fix suggestions.",
+      "error": "",
+      "judge_time_s": 43.1,
+      "code_snippet": "Analyze this code for Dagu: Path traversal in DAG creation allows arbitrary YAML file write outside DAGs directory:\n\nread_fatal (void)\n{\n  pfatal (\"read error\");\n}\n",
+      "model_response_preview": "The code snippet you provided appears to be a function definition in C/C++ that logs a fatal error message. The function `read_fatal` takes no arguments and prints a message to indicate a read error. ",
+      "inference_latency_ms": 31284.447946
+    },
+    {
+      "index": 15,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response completely misses the actual CWE-284 vulnerability in OpenClaw Google Chat webhook routing, instead analyzing the provided Bluetooth L2CAP code for unrelated concurrency issues. The code snippet shown is not the vulnerable component mentioned in the ground truth analysis.",
+      "error": "",
+      "judge_time_s": 65.5,
+      "code_snippet": "Analyze this code for OpenClaw Google Chat shared-path webhook target ambiguity allowed cross-account policy-context misrouting:\n\nstatic void on_l2cap_outgoing_congest(tBTA_JV_L2CAP_CONG *p, uint32_t ",
+      "model_response_preview": "The provided code snippet is part of a Bluetooth Low Energy (BLE) stack implementation, specifically dealing with the handling of L2CAP (Logical Link Control and Adaptation Protocol) congestion contro",
+      "inference_latency_ms": 52176.58624899991
+    },
+    {
+      "index": 16,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response analyzes a C code snippet for a Weechat IRC plugin, while the ground truth describes a SQL injection vulnerability in a PHP application called FacturaScripts. The candidate is examining IRC DCC resume functionality rather than SQL injection in PHP autocomplete methods. The analysis is completely unrelated to the actual vulnerability described.",
+      "error": "",
+      "judge_time_s": 40.9,
+      "code_snippet": "Analyze this code for FacturaScripts has SQL Injection in Autocomplete Actions:\n\nirc_server_xfer_resume_ready_cb (void *data, const char *signal,\n                                 const char *type_data",
+      "model_response_preview": "The code you've provided contains a function `irc_server_xfer_resume_ready_cb` which handles an action for a Weechat IRC plugin. The function appears to process a list of information items and sends a",
+      "inference_latency_ms": 76942.38188100007
+    },
+    {
+      "index": 17,
+      "scores": {
+        "vulnerability_identification": 1,
+        "severity_accuracy": 1,
+        "explanation_quality": 1,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate response completely fails to identify the actual vulnerability (CWE-20 related to qs's arrayLimit bypass in comma parsing). Instead, it analyzes a C++ code snippet from a JavaScript engine and discusses potential vulnerabilities in the 'inherits' function, which is completely unrelated to the issue at hand. The candidate's assessment, explanation, and recommendations are all irrelevant to the code under review and the actual vulnerability described in the ground truth analysis.",
+      "error": "",
+      "judge_time_s": 47.4,
+      "code_snippet": "Analyze this code for qs's arrayLimit bypass in comma parsing allows denial of service:\n\nvoid JSTestNamedConstructor::finishCreation(JSGlobalData& globalData)\n{\n    Base::finishCreation(globalData);\n ",
+      "model_response_preview": "The provided code snippet is from a JavaScript engine and is part of the `JSTestNamedConstructor` class. The function `finishCreation` is designed to complete the creation of an object in the JavaScri",
+      "inference_latency_ms": 46054.55340199979
+    },
+    {
+      "index": 18,
+      "scores": {
+        "vulnerability_identification": 2,
+        "severity_accuracy": 1,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 3,
+        "overall": 2
+      },
+      "reasoning": "The candidate discusses XSS in general but fails to identify the specific vulnerability in the code snippet, assess its severity, provide a clear explanation with specific details, or suggest a direct fix. It focuses more on potential risks in other parts of the codebase rather than analyzing the provided code.",
+      "error": "",
+      "judge_time_s": 43.2,
+      "code_snippet": "Analyze this code for lxml vulnerable to Cross-site Scripting:\n\nMetricsWebContentsObserver::GetPageLoadExtraInfoForCommittedLoad() {\n  DCHECK(committed_load_);\n  return committed_load_->ComputePageLoa",
+      "model_response_preview": "The code snippet you provided is from a method named `GetPageLoadExtraInfoForCommittedLoad` within a class `MetricsWebContentsObserver`. The method is responsible for retrieving additional information",
+      "inference_latency_ms": 48463.20017199992
+    },
+    {
+      "index": 19,
+      "scores": {
+        "vulnerability_identification": 2,
+        "severity_accuracy": 3,
+        "explanation_quality": 2,
+        "fix_suggestion": 1,
+        "relevance": 1,
+        "overall": 1
+      },
+      "reasoning": "The candidate fails to identify the correct CWE-770 vulnerability, instead analyzing a non-existent TAILQ_FOREACH loop in the code. The explanation doesn't connect to the actual vulnerability of infinite re-renders on API errors, and no relevant fix suggestions are provided. The response appears to be analyzing different code than what's shown in the snippet.",
+      "error": "",
+      "judge_time_s": 34.4,
+      "code_snippet": "Analyze this code for Mattermost is vulnerable to DoS due to infinite re-renders on API errors:\n\nserver_response(struct httpd *httpd, struct client *clt)\n{\n\tchar\t\t\t path[PATH_MAX];\n\tchar\t\t\t hostname[H",
+      "model_response_preview": "The provided code for the `server_response` function in the Mattermost server appears to handle HTTP requests and responses. The function is structured to process various aspects of an HTTP request, s",
+      "inference_latency_ms": 76834.15368700003
+    }
+  ]
+}
