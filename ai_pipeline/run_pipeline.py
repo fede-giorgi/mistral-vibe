@@ -18,7 +18,7 @@ def run_pipeline():
         "1_fetch_github.py",   # Step 1: Raw GitHub Advisory extraction
         "2_fetch_bigvul.py",   # Step 2: Raw BigVul sample extraction
         "3_prepare_sard.py",   # Step 3: Raw SARD synthetic data preparation
-        "4_merge_and_split.py" # Step 4: The Brain - Pairing, Unification & Shuffling
+        "4_merge_and_split.py" # Step 4: Pairing, Unification & Shuffling
     ]
 
     print("WARD PIPELINE: Starting full data orchestration...")

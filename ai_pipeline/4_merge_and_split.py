@@ -29,7 +29,7 @@ def process_and_split():
 
     unified_dataset = []
 
-    # 2. Logic: Pair GitHub Advisories with BigVul by CWE
+    # 2. Pair GitHub Advisories with BigVul by CWE
     # Create a map to quickly look up BigVul samples by their violation type (CWE)
     cwe_map = {}
     for item in bigvul:
@@ -57,8 +57,7 @@ def process_and_split():
     # 3. Add SARD data (already in conversational format)
     unified_dataset.extend(sard)
 
-    # 4. Global Shuffle & Split (The Golden Rule of Data Science)
-    # Using a fixed seed (42) ensures reproducible splits
+    # 4. Global Shuffle & Split using a fixed seed (42) ensures reproducible splits
     random.seed(42)
     random.shuffle(unified_dataset)
 
@@ -70,7 +69,7 @@ def process_and_split():
     val = unified_dataset[train_end:val_end]
     test = unified_dataset[val_end:]
 
-    # 5. Export to JSONL (one JSON object per line)
+    # 5. Export to JSONL
     os.makedirs(output_dir, exist_ok=True)
     for name, data in [("train", train), ("val", val), ("test", test)]:
         file_path = os.path.join(output_dir, f"{name}.jsonl")

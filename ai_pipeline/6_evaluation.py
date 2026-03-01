@@ -29,7 +29,7 @@ client = MistralClient(api_key=API_KEY)
 
 # Initialize W&B with Weave integration
 wandb.init(
-    project="ward-security-benchmark", 
+    project="ward-security-benchmark",
     name="base-vs-finetuned",
     config={
         "base_model": BASE_MODEL,
@@ -51,8 +51,10 @@ class FixScore(Enum):
     CORRECT = 4
     EXCELLENT = 5
 
-#%%
-def get_model_response(model_id: str, prompt: str, max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
+
+def get_model_response(
+        model_id: str, prompt: str, max_retries: int = MAX_RETRIES
+        ) -> Dict[str, Any]:
     """
     Get response from Mistral model with retry logic.
 
@@ -66,9 +68,14 @@ def get_model_response(model_id: str, prompt: str, max_retries: int = MAX_RETRIE
     """
     for attempt in range(max_retries):
         try:
-            messages = [{"role": "user", "content": f"Analyze this code for security violations:
-
-{prompt}"}]
+            messages = [
+                {
+                    "role": "user",
+                    "content": (
+                        f"Analyze this code for security violations: {prompt}"
+                    ),
+                }
+            ]
             response = client.chat(
                 model=model_id,
                 messages=messages,
@@ -88,6 +95,7 @@ def get_model_response(model_id: str, prompt: str, max_retries: int = MAX_RETRIE
 
             logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {RETRY_DELAY} seconds...")
             time.sleep(RETRY_DELAY)
+
 
 def load_test_data(file_path: str) -> List[Dict[str, Any]]:
     """
@@ -183,7 +191,7 @@ def evaluate_fix_quality(model_output: Dict[str, Any], ground_truth: Dict[str, A
     """
     # Get the proposed fix from model output
     proposed_fix = model_output.get("fix", "")
-    
+
     # Create evaluation prompt for judge model
     judge_prompt = f"""
     Evaluate the quality of this security fix:
@@ -212,7 +220,7 @@ def evaluate_fix_quality(model_output: Dict[str, Any], ground_truth: Dict[str, A
 
     # Use base model as judge (could also use dedicated judge model)
     judge_response = get_model_response(BASE_MODEL, judge_prompt)
-    
+
     # Parse judge response
     score = judge_response.get("score", 3)
     justification = judge_response.get("justification", "No justification provided")
@@ -283,7 +291,7 @@ def evaluate_model_performance(test_data: List[Dict[str, Any]], sample_size: Opt
                         "base_fix": base_fix,
                         "ft_fix": ft_fix
                     }
-                    
+
                     results.append(result)
                     span.log({
                         "status": "completed",
@@ -372,7 +380,7 @@ def create_wandb_table(results: List[Dict[str, Any]]) -> wandb.Table:
         gt_vuln = r["ground_truth"].get("is_vulnerable", False)
         gt_severity = r["ground_truth"].get("severity", "N/A")
         gt_violation = r["ground_truth"].get("violation_type", "N/A")
-        
+
         base_correct = r["base_detection"]["correct"]
         ft_correct = r["ft_detection"]["correct"]
         ft_severity_correct = r["ft_severity"]["correct"] if r["ft_severity"] else None
@@ -394,64 +402,6 @@ def create_wandb_table(results: List[Dict[str, Any]]) -> wandb.Table:
         )
 
     return table
-
-def main():
-    """
-    Main evaluation pipeline.
-    """
-    try:
-        # Load test data
-        logger.info("Loading test data...")
-        test_data = load_test_data(TEST_DATA_PATH)
-        logger.info(f"Loaded {len(test_data)} test samples")
-
-        # Evaluate models (using subset of 100 for speed)
-        logger.info("Evaluating models...")
-        results = evaluate_model_performance(test_data, sample_size=100)
-
-        # Calculate metrics
-        logger.info("Calculating metrics...")
-        metrics = calculate_metrics(results)
-
-        # Create visualization table
-        logger.info("Creating visualization table...")
-        table = create_wandb_table(results)
-        wandb.log({"comparison_table": table})
-
-        # Log all metrics
-        wandb.log(metrics)
-
-        # Log additional metrics for better visualization
-        wandb.log({
-            "base_vs_ft/detection_accuracy": {
-                "base": calculate_metrics_for_model(results, "base")["detection_accuracy"],
-                "finetuned": metrics["detection_accuracy"]
-            },
-            "base_vs_ft/detection_f1": {
-                "base": calculate_metrics_for_model(results, "base")["detection_f1"],
-                "finetuned": metrics["detection_f1"]
-            },
-            "base_vs_ft/avg_fix_score": {
-                "base": calculate_metrics_for_model(results, "base")["avg_fix_score"],
-                "finetuned": metrics["avg_fix_score"]
-            }
-        })
-
-        # Create W&B Report
-        create_wandb_report(results, metrics)
-
-        logger.info(f"Benchmark completed successfully!")
-        logger.info(f"Detection Accuracy: {metrics['detection_accuracy']}")
-        logger.info(f"Detection F1: {metrics['detection_f1']}")
-        logger.info(f"Severity Accuracy: {metrics['severity_accuracy']}")
-        logger.info(f"Avg Fix Score: {metrics['avg_fix_score']}")
-
-        return metrics
-
-    except Exception as e:
-        logger.error(f"Evaluation failed: {str(e)}")
-        wandb.log({"error": str(e)})
-        raise
 
 def calculate_metrics_for_model(results: List[Dict[str, Any]], model_type: str = "ft") -> Dict[str, float]:
     """
@@ -598,6 +548,66 @@ This report summarizes the evaluation of a security-focused language model, comp
     )
     report_artifact.add_file("evaluation_report.md")
     wandb.log_artifact(report_artifact)
+
+
+def main():
+    """
+    Main evaluation pipeline.
+    """
+    try:
+        # Load test data
+        logger.info("Loading test data...")
+        test_data = load_test_data(TEST_DATA_PATH)
+        logger.info(f"Loaded {len(test_data)} test samples")
+
+        # Evaluate models (using subset of 100 for speed)
+        logger.info("Evaluating models...")
+        results = evaluate_model_performance(test_data, sample_size=100)
+
+        # Calculate metrics
+        logger.info("Calculating metrics...")
+        metrics = calculate_metrics(results)
+
+        # Create visualization table
+        logger.info("Creating visualization table...")
+        table = create_wandb_table(results)
+        wandb.log({"comparison_table": table})
+
+        # Log all metrics
+        wandb.log(metrics)
+
+        # Log additional metrics for better visualization
+        wandb.log({
+            "base_vs_ft/detection_accuracy": {
+                "base": calculate_metrics_for_model(results, "base")["detection_accuracy"],
+                "finetuned": metrics["detection_accuracy"]
+            },
+            "base_vs_ft/detection_f1": {
+                "base": calculate_metrics_for_model(results, "base")["detection_f1"],
+                "finetuned": metrics["detection_f1"]
+            },
+            "base_vs_ft/avg_fix_score": {
+                "base": calculate_metrics_for_model(results, "base")["avg_fix_score"],
+                "finetuned": metrics["avg_fix_score"]
+            }
+        })
+
+        # Create W&B Report
+        create_wandb_report(results, metrics)
+
+        logger.info(f"Benchmark completed successfully!")
+        logger.info(f"Detection Accuracy: {metrics['detection_accuracy']}")
+        logger.info(f"Detection F1: {metrics['detection_f1']}")
+        logger.info(f"Severity Accuracy: {metrics['severity_accuracy']}")
+        logger.info(f"Avg Fix Score: {metrics['avg_fix_score']}")
+
+        return metrics
+
+    except Exception as e:
+        logger.error(f"Evaluation failed: {str(e)}")
+        wandb.log({"error": str(e)})
+        raise
+
 
 if __name__ == "__main__":
     main()
