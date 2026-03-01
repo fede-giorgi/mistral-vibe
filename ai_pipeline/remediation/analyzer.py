@@ -1,8 +1,9 @@
 """Security analyzer abstraction.
 
-Provides a protocol for the analyzer and two implementations:
+Provides a protocol for the analyzer and implementations:
 - MockAnalyzer: returns fixture findings for development/testing.
-- MistralAnalyzer: calls the fine-tuned model via the Mistral API (swap in when ready).
+- MistralAnalyzer: calls the Mistral API (base or fine-tuned model).
+- HuggingFaceAnalyzer: calls a model on Hugging Face via the Inference API.
 """
 
 from __future__ import annotations
@@ -13,11 +14,14 @@ import os
 import time
 from typing import Protocol
 
+import httpx
 from mistralai import Mistral
 
 from ai_pipeline.remediation.models import AnalyzerOutput, Finding, Severity
 
 logger = logging.getLogger(__name__)
+
+HF_INFERENCE_URL = "https://api-inference.huggingface.co/models"
 
 ANALYZER_SYSTEM_PROMPT = (
     "You are a senior security engineer. Analyze the provided code for security "
@@ -176,3 +180,88 @@ class MistralAnalyzer:
             except Exception as e:
                 logger.warning("Skipping malformed finding at index %d: %s", i, e)
         return findings
+
+
+class HuggingFaceAnalyzer:
+    """Calls a fine-tuned model on Hugging Face via the Inference API.
+
+    Use your model's repo id (e.g. username/my-security-model) from the HF link.
+    Set HUGGINGFACE_HUB_TOKEN or HF_TOKEN in the environment.
+    """
+
+    def __init__(
+        self,
+        model_id: str,
+        token: str | None = None,
+        max_retries: int = 5,
+        retry_delay: float = 5.0,
+        max_new_tokens: int = 1024,
+    ) -> None:
+        self._model_id = model_id.strip()
+        if "/" not in self._model_id:
+            raise ValueError(
+                "Hugging Face model_id must be 'username/repo-name' (e.g. myuser/my-security-model)"
+            )
+        self._token = (token or os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN", "")).strip()
+        if not self._token:
+            raise ValueError(
+                "Hugging Face Inference API requires a token. Set HUGGINGFACE_HUB_TOKEN or HF_TOKEN."
+            )
+        self._max_retries = max_retries
+        self._retry_delay = retry_delay
+        self._max_new_tokens = max_new_tokens
+
+    def analyze(self, code: str, file_path: str = "<stdin>") -> AnalyzerOutput:
+        raw = self._call_model(code)
+        findings = MistralAnalyzer._parse_findings(raw, file_path)
+        return AnalyzerOutput(findings=findings, raw_response=raw, model_id=self._model_id)
+
+    def _call_model(self, code: str) -> str:
+        prompt = (
+            f"{ANALYZER_SYSTEM_PROMPT}\n\n"
+            f"Analyze this code for security vulnerabilities:\n\n```\n{code}\n```"
+        )
+        url = f"{HF_INFERENCE_URL}/{self._model_id}"
+        headers = {"Authorization": f"Bearer {self._token}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": self._max_new_tokens,
+                "return_full_text": False,
+                "temperature": 0.2,
+            },
+        }
+
+        for attempt in range(self._max_retries):
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                if isinstance(data, list) and len(data) > 0 and "generated_text" in data[0]:
+                    return data[0]["generated_text"].strip()
+                if isinstance(data, dict):
+                    if "error" in data:
+                        raise RuntimeError(data["error"])
+                    if "generated_text" in data:
+                        return data["generated_text"].strip()
+                return json.dumps({"findings": [], "error": "Unexpected HF response format"})
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 503:
+                    msg = e.response.text or "Model loading"
+                    if attempt == self._max_retries - 1:
+                        logger.error("HF model still loading after %d attempts: %s", self._max_retries, msg)
+                        return json.dumps({"findings": [], "error": msg})
+                    logger.warning("Attempt %d: %s — retrying in %.1fs", attempt + 1, msg, self._retry_delay)
+                    time.sleep(self._retry_delay)
+                else:
+                    logger.error("HF Inference API error %s: %s", e.response.status_code, e.response.text)
+                    return json.dumps({"findings": [], "error": str(e)})
+            except Exception as e:
+                if attempt == self._max_retries - 1:
+                    logger.error("HuggingFace analyzer failed after %d attempts: %s", self._max_retries, e)
+                    return json.dumps({"findings": [], "error": str(e)})
+                logger.warning("Attempt %d failed: %s — retrying in %.1fs", attempt + 1, e, self._retry_delay)
+                time.sleep(self._retry_delay)
+
+        return json.dumps({"findings": []})
