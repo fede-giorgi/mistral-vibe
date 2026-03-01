@@ -36,7 +36,7 @@ def main():
     append_to_file(val_file, val_lines)
     append_to_file(test_file, test_lines)
 
-    print("✅ SARD dataset successfully appended to train, val, and test splits.")
+    print("SARD dataset successfully appended to train, val, and test splits.")
 
 if __name__ == "__main__":
     main()

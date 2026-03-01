@@ -45,5 +45,3 @@ def process_to_json(df, num_rows=50):
 
 
 data = process_to_json(subset_df)
-
-# %%

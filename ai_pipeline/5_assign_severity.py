@@ -14,13 +14,13 @@ from mistralai import Mistral
 SEVERITY_GUIDELINES = """
 Assign severity levels based on these strict criteria:
 
-🟥 HIGH: Remote Code Execution, OS Command Injection, Insecure Deserialization leading to code execution, SQL Injection affecting sensitive data, Authentication bypass, Privilege escalation, Arbitrary file read/write in sensitive directories, Direct access to credentials/secrets, Widespread data exfiltration, Full system compromise
+HIGH: Remote Code Execution, OS Command Injection, Insecure Deserialization leading to code execution, SQL Injection affecting sensitive data, Authentication bypass, Privilege escalation, Arbitrary file read/write in sensitive directories, Direct access to credentials/secrets, Widespread data exfiltration, Full system compromise
 
-🟧 MEDIUM: Limited data exposure, Partial data manipulation without full compromise, Non-persistent Denial of Service, Missing input validation without clearly exploitable sink, Hardcoded credentials with limited scope, Significant preconditions required, Meaningful but contained impact
+MEDIUM: Limited data exposure, Partial data manipulation without full compromise, Non-persistent Denial of Service, Missing input validation without clearly exploitable sink, Hardcoded credentials with limited scope, Significant preconditions required, Meaningful but contained impact
 
-🟩 LOW: Best-practice violations, Minimal realistic exploitability, Theoretical risk without clear exploitation path, Negligible impact, Weak logging/minor configuration issues/non-sensitive exposure, Unrealistic attacker capabilities required
+LOW: Best-practice violations, Minimal realistic exploitability, Theoretical risk without clear exploitation path, Negligible impact, Weak logging/minor configuration issues/non-sensitive exposure, Unrealistic attacker capabilities required
 
-⚖️ Decision Rules:
+Decision Rules:
 1. If vulnerability enables code execution or full compromise → HIGH
 2. If impact unclear but dangerous sink exists (e.g., command execution) → HIGH
 3. If exploitation requires multiple unrealistic assumptions → MEDIUM/LOW
