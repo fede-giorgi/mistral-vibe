@@ -1630,65 +1630,155 @@ class VibeApp(App):  # noqa: PLR0904
         self.refresh(layout=True)
 
     async def _fix_security(self) -> None:
+        """Handler for the /security command.
+
+        Scans all Python files in the current working directory with
+        wardstral-8b (fine-tuned security model on HF Endpoint), then
+        hands the findings to the Vibe agent loop for automated remediation.
         """
-        Handler for the /security command.
-        Orchestrates the dual-agent security pipeline:
-        Stage 1: Vulnerability analysis via the 'Ward' (fine-tuned) model.
-        Stage 2: Automated remediation via the default Vibe agent loop (Codestral).
-        """
-        # Ensure only one agent process is running at a time
         if self._agent_running:
             await self._mount_and_scroll(ErrorMessage("An agent process is already active. Please wait."))
             return
 
-        self._agent_running = True
+        cwd = Path.cwd()
+        py_files = sorted(
+            f for f in cwd.rglob("*.py")
+            if not f.name.endswith("_fixed.py")
+            and not f.name.startswith("__")
+        )
+        if not py_files:
+            await self._mount_and_scroll(WarningMessage(f"No Python files found in `{cwd}`."))
+            return
 
-        # Retrieve the latest user message to serve as the code context for analysis
-        user_messages = [msg for msg in self.agent_loop.messages if msg.role == Role.user]
-        if not user_messages:
-             await self._mount_and_scroll(WarningMessage("No code context found. Please paste some code or mention a file first."))
-             self._agent_running = False
-             return
+        await self._mount_and_scroll(UserCommandMessage(
+            f"**Ward** is scanning **{len(py_files)}** file(s) in `{cwd.name}/`..."
+        ))
 
-        # Security Audit (The Analyst): notify user that the audit is beginning
-        await self._mount_and_scroll(UserCommandMessage("Ward is starting the security audit..."))
+        try:
+            all_reports: list[str] = []
+            for py_file in py_files:
+                rel = py_file.relative_to(cwd)
+                code = py_file.read_text(encoding="utf-8", errors="replace")
+                if not code.strip():
+                    continue
 
-        await self._mount_and_scroll(UserCommandMessage("TUTTO OK SEMPRE FORZA GENOA!!"))
+                lines = code.splitlines()
+                if len(lines) > 30:
+                    code = "\n".join(lines[:30]) + "\n# ... truncated ...\n"
 
-        # try:
-        #     # Execute a direct backend call for the security analysis.
-        #     # We use a synchronous chat call for simplicity (non-streaming for this stage).
-        #     analysis_report = await self.agent_loop.backend.chat(
-        #         messages=[
-        #             {
-        #                 "role": Role.system,
-        #                 "content": "You are a senior security researcher. Provide a structured report including VIOLATION type, SEVERITY, and RISK explanation."
-        #             },
-        #             {"role": Role.user, "content": user_messages[-1].content}
-        #         ],
-        #         model=os.getenv("WARD_MODEL_ID", "mistral-large-latest")
-        #     )
+                await self._mount_and_scroll(UserCommandMessage(f"Analyzing `{rel}`..."))
+                report = await self._call_ward_analyzer(code)
+                report = self._sanitize_ward_output(report)
 
-        #     # Display the audit report in the UI all at once
-        #     from vibe.cli.textual_ui.widgets.messages import AssistantMessage
-        #     await self._mount_and_scroll(AssistantMessage(analysis_report.content))
+                if not report.strip():
+                    continue
+                all_reports.append(f"### `{rel}`\n\n{report}")
 
-        #     # Code Remediation (The Fixer): we pass Ward's report into a prompt for the standard agent loop. This allows the 'Coder' model to use tools (like write_file) to physically fix the code.
-        #     remediation_prompt = (
-        #         f"Vulnerabilities detected by the security audit:\n{analysis_report.content}\n\n"
-        #         f"Please apply the necessary patches to fix these issues immediately."
-        #     )
+            if not all_reports:
+                from vibe.cli.textual_ui.widgets.messages import AssistantMessage
+                await self._mount_and_scroll(AssistantMessage("No security issues found. Code looks clean."))
+                return
 
-        #     # Trigger the standard agent loop turn.
-        #     # Note: This method handles the Fixer's output streaming automatically.
-        #     await self._handle_agent_loop_turn(remediation_prompt)
+            full_report = "\n\n---\n\n".join(all_reports)
+            from vibe.cli.textual_ui.widgets.messages import AssistantMessage
+            await self._mount_and_scroll(AssistantMessage(
+                f"## Security Audit Report (Ward)\n\n{full_report}"
+            ))
 
-        # except Exception as e:
-        #     # Catch and display any errors within the pipeline
-        #     await self._mount_and_scroll(ErrorMessage(f"Security audit failed: {e}"))
-        # finally:
-        #     # Reset agent state to allow subsequent user interactions
-        #     self._agent_running = False
+            file_list = ", ".join(f"`{f.relative_to(cwd)}`" for f in py_files)
+            remediation_prompt = (
+                f"A security audit by our fine-tuned model (wardstral-8b) scanned "
+                f"the following files in the current directory: {file_list}\n\n"
+                f"Here are the vulnerabilities found:\n\n{full_report}\n\n"
+                f"Please fix ALL the security issues identified above directly in the source files. "
+                f"Use parameterized queries for SQL injection, proper escaping for XSS, "
+                f"input validation for command injection, and secure file handling for path traversal."
+            )
+
+            self._agent_task = asyncio.create_task(
+                self._handle_agent_loop_turn(remediation_prompt)
+            )
+
+        except Exception as e:
+            await self._mount_and_scroll(ErrorMessage(f"Security audit failed: {e}"))
+            self._agent_running = False
+
+    @staticmethod
+    def _sanitize_ward_output(text: str) -> str:
+        """Truncate model output if it starts degenerating (repeating fragments)."""
+        lines = text.splitlines()
+        clean: list[str] = []
+        repeat_count = 0
+        prev = ""
+        for line in lines:
+            stripped = line.strip()
+            if stripped == prev and stripped:
+                repeat_count += 1
+                if repeat_count > 2:
+                    break
+            else:
+                repeat_count = 0
+            prev = stripped
+            clean.append(line)
+        result = "\n".join(clean).strip()
+        if len(result) > 2000:
+            result = result[:2000] + "\n\n*(output truncated)*"
+        return result
+
+    @staticmethod
+    def _load_ai_env() -> None:
+        """Load ai_pipeline/.env if key vars are missing."""
+        if os.getenv("HF_ENDPOINT_URL"):
+            return
+        for candidate in [
+            Path.cwd() / ".env",
+            Path.cwd().parent / ".env",
+            Path(__file__).resolve().parents[3] / "ai_pipeline" / ".env",
+        ]:
+            if candidate.is_file():
+                for line in candidate.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    if key.strip() and not os.getenv(key.strip()):
+                        os.environ[key.strip()] = value.strip()
+                break
+
+    async def _call_ward_analyzer(self, code: str) -> str:
+        """Call wardstral-8b on the HF Inference Endpoint for vulnerability analysis."""
+        import httpx
+
+        self._load_ai_env()
+
+        endpoint_url = os.getenv("HF_ENDPOINT_URL", "").strip().rstrip("/")
+        token = (os.getenv("HUGGINGFACE_HUB_TOKEN") or os.getenv("HF_TOKEN", "")).strip()
+        model_id = os.getenv("WARD_MODEL_ID", "ratnam1510/wardstral-8b")
+
+        if not endpoint_url:
+            raise ValueError(
+                "HF_ENDPOINT_URL not set. Add it to ai_pipeline/.env or export it."
+            )
+
+        url = f"{endpoint_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_id,
+            "messages": [
+                {"role": "user", "content": f"analyze this code for security violations:\n\n{code}"},
+            ],
+            "max_tokens": 512,
+            "temperature": 0.0,
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
 
 
 def _print_session_resume_message(session_id: str | None) -> None:
