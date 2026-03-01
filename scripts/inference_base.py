@@ -55,9 +55,17 @@ try:
 
     login(token=HF_TOKEN)
 
-    # Load test data
+    # Load test data (specify data_files to avoid picking up eval/ JSON files)
     print(f"Loading test data from {DATASET_REPO}...", flush=True)
-    dataset = load_dataset(DATASET_REPO, split="test")
+    dataset = load_dataset(
+        DATASET_REPO,
+        split="test",
+        data_files={
+            "train": "data/train.jsonl",
+            "validation": "data/validation.jsonl",
+            "test": "data/test.jsonl",
+        },
+    )
     n_samples = min(SAMPLE_SIZE, len(dataset))
     print(f"  Loaded {len(dataset)} test examples, using {n_samples}", flush=True)
 

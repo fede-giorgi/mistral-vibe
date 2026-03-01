@@ -262,7 +262,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--gemini-model",
-        default="gemini-2.0-flash",
+        default="gemini-2.5-flash",
         help="Gemini model to use as judge",
     )
     parser.add_argument(
@@ -370,22 +370,8 @@ def main() -> None:
     report_path = out_dir / f"report_iter_{args.iteration}.md"
     report_path.write_text(report, encoding="utf-8")
 
-    # Also upload metrics back to HF dataset repo
-    if not args.local_file and hf_token:
-        try:
-            api = HfApi(token=hf_token)
-            username = api.whoami()["name"]
-            dataset_repo = args.dataset_repo or f"{username}/security-vuln-dataset"
-            api.upload_file(
-                path_or_fileobj=str(results_path),
-                path_in_repo=f"eval/judge_results_iter_{args.iteration}.json",
-                repo_id=dataset_repo,
-                repo_type="dataset",
-                token=hf_token,
-            )
-            print(f"\nJudge results uploaded to {dataset_repo}")
-        except Exception as e:
-            print(f"\nWarning: Failed to upload judge results: {e}")
+    # Judge results saved locally only — do NOT upload to HF dataset repo
+    # because the different JSON schema breaks load_dataset().
 
     print(f"\nResults saved to: {results_path}")
     print(f"Report saved to: {report_path}")
