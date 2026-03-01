@@ -35,8 +35,15 @@ if __name__ == "__main__":
     bigvul_data = fetch_bigvul.process_to_json(df, num_rows=len(df))
     print(f"-> Sampled {len(bigvul_data)} vulnerable code blocks from BigVul.")
     
-    print("\n=== Pipeline Step 3: Pairing Datasets and Exporting ===")
+    print("\n=== Pipeline Step 3: Pairing Datasets ===")
     pair_datasets = load_module("pair_datasets", "ai_pipeline/3_pair_datasets.py")
+    paired_output_file = os.path.join("ai_pipeline", "paired_data.json")
+    pair_datasets.pair_datasets_and_export(advisories, bigvul_data, paired_output_file)
+    
+    print("\n=== Pipeline Step 4: Merging with SARD and Splitting ===")
+    merge_split = load_module("merge_split", "ai_pipeline/4_merge_and_split.py")
+    sard_file = os.path.join("ai_pipeline", "chat_dataset.jsonl")
     output_dir = os.path.join("ai_pipeline", "dataset")
-    pair_datasets.pair_datasets_and_export(advisories, bigvul_data, output_dir)
+    merge_split.merge_and_split_datasets(paired_output_file, sard_file, output_dir)
+    
     print("\nPipeline Complete! Datasets are ready for fine-tuning.")

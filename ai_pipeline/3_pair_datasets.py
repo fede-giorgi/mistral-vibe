@@ -4,10 +4,11 @@ import random
 import pandas as pd
 from typing import List, Dict
 
-def pair_datasets_and_export(advisories: List[Dict], bigvul_data: List[Dict], output_dir: str):
+def pair_datasets_and_export(advisories: List[Dict], bigvul_data: List[Dict], output_file: str):
     """
     Pairs advisories with BigVul based on CWE overlap.
     Formats records for Mistral Fine-Tuning: JSONL with roles.
+    Saves the entire combined dataset to a single file for later shuffling and splitting.
     """
     print("Pairing datasets based on CWE overlaps...")
     dataset = []
@@ -52,30 +53,14 @@ def pair_datasets_and_export(advisories: List[Dict], bigvul_data: List[Dict], ou
         print("No matches found! Please ensure CWE IDs match formats between datasets.")
         return
 
-    # 80 / 10 / 10 Split
-    random.shuffle(dataset)
-    train_size = int(0.8 * len(dataset))
-    val_size = int(0.1 * len(dataset))
+    # Save the entire dataset to a single file
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    with open(output_file, "w") as f:
+        for item in dataset:
+            f.write(json.dumps(item) + "\n")
 
-    train_data = dataset[:train_size]
-    val_data = dataset[train_size:train_size+val_size]
-    test_data = dataset[train_size+val_size:]
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    def write_jsonl(data, path):
-        with open(path, "w") as f:
-            for item in data:
-                f.write(json.dumps(item) + "\n")
-
-    write_jsonl(train_data, os.path.join(output_dir, "train.jsonl"))
-    write_jsonl(val_data, os.path.join(output_dir, "val.jsonl"))
-    write_jsonl(test_data, os.path.join(output_dir, "test.jsonl"))
-
-    print(f"Exported to {output_dir}:")
-    print(f" - train.jsonl ({len(train_data)} examples)")
-    print(f" - val.jsonl ({len(val_data)} examples)")
-    print(f" - test.jsonl ({len(test_data)} examples)")
+    print(f"Exported combined dataset to {output_file} with {len(dataset)} examples")
 
 if __name__ == "__main__":
     # Test stub: If we want to run this standalone, we'd load the exported JSONs from steps 1 & 2
