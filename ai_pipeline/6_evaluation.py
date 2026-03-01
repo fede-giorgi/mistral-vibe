@@ -10,6 +10,7 @@ import wandb
 from tqdm import tqdm
 import logging
 from pathlib import Path
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,17 @@ RETRY_DELAY = 5  # seconds
 client = MistralClient(api_key=API_KEY)
 wandb.init(project="ward-security-benchmark", name="base-vs-finetuned")
 
+class Severity(Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class FixScore(Enum):
+    INCORRECT = 1
+    PARTIALLY_CORRECT = 2
+    REDUCES_RISK = 3
+    CORRECT = 4
+    EXCELLENT = 5
 
 #%%
 def get_model_response(model_id: str, prompt: str, max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
@@ -43,7 +55,9 @@ def get_model_response(model_id: str, prompt: str, max_retries: int = MAX_RETRIE
     """
     for attempt in range(max_retries):
         try:
-            messages = [{"role": "user", "content": f"Analyze this code for security violations:\n\n{prompt}"}]
+            messages = [{"role": "user", "content": f"Analyze this code for security violations:
+
+{prompt}"}]
             response = client.chat(
                 model=model_id,
                 messages=messages,
@@ -102,6 +116,103 @@ def load_test_data(file_path: str) -> List[Dict[str, Any]]:
 
     return test_data
 
+def evaluate_vulnerability_detection(model_output: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Evaluate vulnerability detection (binary classification).
+
+    Args:
+        model_output: Model's response
+        ground_truth: Ground truth labels
+
+    Returns:
+        Detection evaluation metrics
+    """
+    gt_vulnerable = ground_truth.get("is_vulnerable", False)
+    model_vulnerable = model_output.get("is_vulnerable", False)
+
+    return {
+        "tp": int(gt_vulnerable and model_vulnerable),
+        "fp": int(not gt_vulnerable and model_vulnerable),
+        "tn": int(not gt_vulnerable and not model_vulnerable),
+        "fn": int(gt_vulnerable and not model_vulnerable),
+        "correct": gt_vulnerable == model_vulnerable
+    }
+
+def evaluate_severity_classification(model_output: Dict[str, Any], ground_truth: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Evaluate severity classification (categorical).
+
+    Args:
+        model_output: Model's response
+        ground_truth: Ground truth labels
+
+    Returns:
+        Severity evaluation metrics
+    """
+    gt_severity = ground_truth.get("severity")
+    model_severity = model_output.get("severity")
+
+    return {
+        "correct": gt_severity == model_severity,
+        "gt_severity": gt_severity,
+        "model_severity": model_severity
+    }
+
+def evaluate_fix_quality(model_output: Dict[str, Any], ground_truth: Dict[str, Any], code: str) -> Dict[str, Any]:
+    """
+    Evaluate fix quality using LLM-as-a-judge approach.
+
+    Args:
+        model_output: Model's response
+        ground_truth: Ground truth labels
+        code: Original vulnerable code
+
+    Returns:
+        Fix quality evaluation
+    """
+    # Get the proposed fix from model output
+    proposed_fix = model_output.get("fix", "")
+    
+    # Create evaluation prompt for judge model
+    judge_prompt = f"""
+    Evaluate the quality of this security fix:
+
+    Original vulnerable code:
+    {code}
+
+    Proposed fix:
+    {proposed_fix}
+
+    Ground truth vulnerability: {ground_truth.get("violation_type", "Unknown")}
+    Ground truth severity: {ground_truth.get("severity", "Unknown")}
+
+    Score the fix on a 1-5 scale:
+    1 = incorrect or dangerous
+    2 = partially correct but flawed
+    3 = reduces risk but incomplete
+    4 = correct and secure
+    5 = correct, secure, and well implemented
+
+    Provide:
+    1. Score (1-5)
+    2. Brief justification
+    3. Confidence level (0-1)
+    """
+
+    # Use base model as judge (could also use dedicated judge model)
+    judge_response = get_model_response(BASE_MODEL, judge_prompt)
+    
+    # Parse judge response
+    score = judge_response.get("score", 3)
+    justification = judge_response.get("justification", "No justification provided")
+    confidence = judge_response.get("confidence", 0.7)
+
+    return {
+        "score": score,
+        "justification": justification,
+        "confidence": confidence
+    }
+
 def evaluate_model_performance(test_data: List[Dict[str, Any]], sample_size: Optional[int] = None) -> Dict[str, Any]:
     """
     Evaluate both base and finetuned models on test data.
@@ -118,25 +229,41 @@ def evaluate_model_performance(test_data: List[Dict[str, Any]], sample_size: Opt
 
     for entry in tqdm(data_subset, desc="Evaluating models"):
         try:
-            vulnerable_code = entry["messages"][0]["content"]
+            code = entry["messages"][0]["content"]
             ground_truth = json.loads(entry["messages"][1]["content"])
 
             # Query both models
-            base_out = get_model_response(BASE_MODEL, vulnerable_code)
-            ft_out = get_model_response(FINETUNED_MODEL, vulnerable_code)
+            base_out = get_model_response(BASE_MODEL, code)
+            ft_out = get_model_response(FINETUNED_MODEL, code)
 
-            # Check if responses contain expected fields
-            gt_violation = ground_truth.get("violation_type")
-            ft_correct = ft_out.get("violation_type") == gt_violation
-            base_correct = base_out.get("violation_type") == gt_violation
+            # Skip if errors occurred
+            if "error" in base_out or "error" in ft_out:
+                logger.warning(f"Skipping entry due to API errors")
+                continue
+
+            # Evaluate vulnerability detection
+            base_detection = evaluate_vulnerability_detection(base_out, ground_truth)
+            ft_detection = evaluate_vulnerability_detection(ft_out, ground_truth)
+
+            # Evaluate severity (only for vulnerable cases)
+            base_severity = evaluate_severity_classification(base_out, ground_truth) if ground_truth.get("is_vulnerable") else None
+            ft_severity = evaluate_severity_classification(ft_out, ground_truth) if ground_truth.get("is_vulnerable") else None
+
+            # Evaluate fix quality (only for vulnerable cases)
+            base_fix = evaluate_fix_quality(base_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
+            ft_fix = evaluate_fix_quality(ft_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
 
             results.append({
-                "code": vulnerable_code,
+                "code": code,
                 "ground_truth": ground_truth,
                 "base_model": base_out,
                 "finetuned_model": ft_out,
-                "ft_correct_type": ft_correct,
-                "base_correct_type": base_correct
+                "base_detection": base_detection,
+                "ft_detection": ft_detection,
+                "base_severity": base_severity,
+                "ft_severity": ft_severity,
+                "base_fix": base_fix,
+                "ft_fix": ft_fix
             })
 
         except Exception as e:
@@ -144,6 +271,59 @@ def evaluate_model_performance(test_data: List[Dict[str, Any]], sample_size: Opt
             continue
 
     return results
+
+def calculate_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Calculate comprehensive metrics from evaluation results.
+
+    Args:
+        results: Evaluation results
+
+    Returns:
+        Dictionary containing all metrics
+    """
+    if not results:
+        return {
+            "detection_accuracy": 0.0,
+            "detection_precision": 0.0,
+            "detection_recall": 0.0,
+            "detection_f1": 0.0,
+            "detection_fpr": 0.0,
+            "severity_accuracy": 0.0,
+            "avg_fix_score": 0.0
+        }
+
+    # Detection metrics
+    total_tp = sum(r["ft_detection"]["tp"] for r in results)
+    total_fp = sum(r["ft_detection"]["fp"] for r in results)
+    total_tn = sum(r["ft_detection"]["tn"] for r in results)
+    total_fn = sum(r["ft_detection"]["fn"] for r in results)
+
+    total_correct = sum(r["ft_detection"]["correct"] for r in results)
+    detection_accuracy = total_correct / len(results)
+
+    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    fpr = total_fp / (total_fp + total_tn) if (total_fp + total_tn) > 0 else 0
+
+    # Severity metrics (only for vulnerable cases)
+    vulnerable_results = [r for r in results if r["ground_truth"].get("is_vulnerable")]
+    severity_correct = sum(1 for r in vulnerable_results if r["ft_severity"]["correct"]) if vulnerable_results else 0
+    severity_accuracy = severity_correct / len(vulnerable_results) if vulnerable_results else 0
+
+    # Fix quality metrics (only for vulnerable cases)
+    avg_fix_score = sum(r["ft_fix"]["score"] for r in vulnerable_results) / len(vulnerable_results) if vulnerable_results else 0
+
+    return {
+        "detection_accuracy": round(detection_accuracy, 4),
+        "detection_precision": round(precision, 4),
+        "detection_recall": round(recall, 4),
+        "detection_f1": round(f1, 4),
+        "detection_fpr": round(fpr, 4),
+        "severity_accuracy": round(severity_accuracy, 4),
+        "avg_fix_score": round(avg_fix_score, 4)
+    }
 
 def create_wandb_table(results: List[Dict[str, Any]]) -> wandb.Table:
     """
@@ -155,39 +335,31 @@ def create_wandb_table(results: List[Dict[str, Any]]) -> wandb.Table:
     Returns:
         W&B Table object
     """
-    table = wandb.Table(columns=["Code", "GT Violation", "Base Output", "FT Output", "FT Correct"])
+    table = wandb.Table(columns=[
+        "Code", "GT Vulnerable", "GT Severity", "Base Correct", 
+        "FT Correct", "FT Severity Correct", "FT Fix Score"
+    ])
 
     for r in results:
+        gt_vuln = r["ground_truth"].get("is_vulnerable", False)
+        gt_severity = r["ground_truth"].get("severity", "N/A")
+        
+        base_correct = r["base_detection"]["correct"]
+        ft_correct = r["ft_detection"]["correct"]
+        ft_severity_correct = r["ft_severity"]["correct"] if r["ft_severity"] else None
+        ft_fix_score = r["ft_fix"]["score"] if r["ft_fix"] else None
+
         table.add_data(
             r["code"][:100] + "..." if len(r["code"]) > 100 else r["code"],
-            r["ground_truth"].get("violation_type", "N/A"),
-            str(r["base_model"]),
-            str(r["finetuned_model"]),
-            r["ft_correct_type"]
+            gt_vuln,
+            gt_severity,
+            base_correct,
+            ft_correct,
+            ft_severity_correct,
+            ft_fix_score
         )
 
     return table
-
-def calculate_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
-    """
-    Calculate accuracy metrics from evaluation results.
-
-    Args:
-        results: Evaluation results
-
-    Returns:
-        Dictionary containing accuracy metrics
-    """
-    if not results:
-        return {"ft_accuracy": 0.0, "base_accuracy": 0.0}
-
-    ft_accuracy = sum(1 for r in results if r["ft_correct_type"]) / len(results)
-    base_accuracy = sum(1 for r in results if r["base_correct_type"]) / len(results)
-
-    return {
-        "ft_accuracy": round(ft_accuracy, 4),
-        "base_accuracy": round(base_accuracy, 4)
-    }
 
 def main():
     """
@@ -203,17 +375,23 @@ def main():
         logger.info("Evaluating models...")
         results = evaluate_model_performance(test_data, sample_size=100)
 
+        # Calculate metrics
+        logger.info("Calculating metrics...")
+        metrics = calculate_metrics(results)
+
         # Create visualization table
         logger.info("Creating visualization table...")
         table = create_wandb_table(results)
         wandb.log({"comparison_table": table})
 
-        # Calculate and log metrics
-        metrics = calculate_metrics(results)
+        # Log all metrics
         wandb.log(metrics)
 
         logger.info(f"Benchmark completed successfully!")
-        logger.info(f"FT Accuracy: {metrics['ft_accuracy']} vs Base: {metrics['base_accuracy']}")
+        logger.info(f"Detection Accuracy: {metrics['detection_accuracy']}")
+        logger.info(f"Detection F1: {metrics['detection_f1']}")
+        logger.info(f"Severity Accuracy: {metrics['severity_accuracy']}")
+        logger.info(f"Avg Fix Score: {metrics['avg_fix_score']}")
 
         return metrics
 
