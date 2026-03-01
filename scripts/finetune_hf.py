@@ -44,6 +44,7 @@ LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "2e-5"))
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "1"))
 GRADIENT_ACCUMULATION_STEPS = int(os.environ.get("GRADIENT_ACCUMULATION_STEPS", "16"))
 MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "2048"))
+RESUME_FROM_CHECKPOINT = os.environ.get("RESUME_FROM_CHECKPOINT", "")
 
 login(token=HF_TOKEN)
 
@@ -145,7 +146,9 @@ training_args = SFTConfig(
     warmup_ratio=0.1,
     logging_steps=10,
     eval_strategy="no",
-    save_strategy="epoch",
+    save_strategy="steps",
+    save_steps=10,
+    save_total_limit=3,
     load_best_model_at_end=False,
     fp16=True,
     max_seq_length=MAX_SEQ_LENGTH,
@@ -159,7 +162,7 @@ training_args = SFTConfig(
     gradient_checkpointing_kwargs={"use_reentrant": False},
 )
 
-# --- Train ---
+# --- Train (resume from checkpoint if available) ---
 print("Starting training...")
 trainer = SFTTrainer(
     model=model,
@@ -170,7 +173,21 @@ trainer = SFTTrainer(
     tokenizer=tokenizer,
 )
 
-trainer.train()
+checkpoint = RESUME_FROM_CHECKPOINT or None
+# Auto-detect latest checkpoint in output dir
+if not checkpoint:
+    from pathlib import Path
+
+    checkpoints = sorted(Path("./output").glob("checkpoint-*"), key=os.path.getmtime)
+    if checkpoints:
+        checkpoint = str(checkpoints[-1])
+        print(f"Resuming from auto-detected checkpoint: {checkpoint}")
+
+if checkpoint:
+    print(f"Resuming from checkpoint: {checkpoint}")
+    trainer.train(resume_from_checkpoint=checkpoint)
+else:
+    trainer.train()
 
 # --- Push LoRA adapters to Hub ---
 print(f"Pushing LoRA adapters to {OUTPUT_REPO}...")
