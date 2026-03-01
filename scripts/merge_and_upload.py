@@ -99,7 +99,6 @@ def main() -> None:
     merged.push_to_hub(
         MERGED_REPO,
         token=token,
-        safe_serialization=True,
         commit_message="Upload merged Ministral-8B + security LoRA model",
         max_shard_size="2GB",
     )
