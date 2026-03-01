@@ -131,7 +131,7 @@ mistral-vibe/
 │   └── textual_ui/app.py        # Implements `_fix_security()` Dual-Agent handoff
 ```
 
-### 🛠️ How the Fine-Tuning Works
+## 🛠️ How the Fine-Tuning Works
 
 To reproduce our fine-tuning and data orchestration process:
 
@@ -161,6 +161,17 @@ The helper scripts (`launch_finetune.py`, `launch_inference.py`,
 `judge_gemini.py`) all accept `--dataset-repo` and other options; run them
 with `--help` to explore the CLI.
 
+
+## 📊 Evaluation & MLOps (W&B)
+
+We heavily rely on **Weights & Biases (W&B)** to track our fine-tuning experiments and mathematically prove our model's superiority against the base model.
+
+Our `scripts/evaluate.py` implements an **LLM-as-a-Judge** framework evaluated on 3 dimensions:
+1. **Detection (Binary):** Precision, Recall, and F1-Score for finding vulnerabilities.
+2. **Severity (Categorical):** Accuracy in classifying issues as Low, Medium, or High.
+3. **Remediation Quality (1-5 Scale):** An independent judge model scores the generated patches for safety and correctness.
+
+*All reasoning traces and model comparisons are logged natively using **W&B Weave**.*
 
 ### 🎯 Usage: The /security Command
 For local development and testing, install the project in editable mode:
