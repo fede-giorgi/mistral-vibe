@@ -21,51 +21,46 @@
 
 > 💡 **Note:** This project is built on top of [Mistral Vibe](https://github.com/mistralai/mistral-vibe). You can find the original, unmodified Mistral Vibe README [here](https://github.com/mistralai/mistral-vibe/blob/main/README.md).
 
-
-
 ## 📑 Table of Contents
 
-- [🚀 What is Wardstral?](#-what-is-Wardstral)
+- [🚀 What is Wardstral?](#-what-is-wardstral)
 - [🧠 The AI Pipeline & Repository Structure](#-the-ai-pipeline--repository-structure)
   - [🛠️ How the Fine-Tuning Works](#️-how-the-fine-tuning-works)
 - [🎯 Usage: The `/security` Command](#-usage-the-security-command)
+- [📊 Evaluation & MLOps (W&B)](#-evaluation--mlops-wb)
 - [⚙️ Standard Vibe Installation & Setup](#️-standard-vibe-installation--setup)
-  - [One-line install (recommended)](#one-line-install-recommended)
-  - [Quick Start](#quick-start)
-- [📊 Evaluation & Tracking](#-evaluation--tracking)
 - [📄 License](#-license)
-
 
 ## 🚀 What is Wardstral?
 
-Modern Engineering Managers want to enforce custom security policies (e.g., "No eval()", "Mandatory Parameterization") across PRs, but base LLMs are inconsistent and struggle with structured policy reasoning.
+Modern Engineering Managers want to enforce custom security policies (e.g., "No buffer overflows", "Mandatory SQL Parameterization") across PRs, but base LLMs are inconsistent and struggle with structured policy reasoning.
 
 Wardstral solves this by introducing a native `/security` command into Mistral Vibe. It uses a **Dual-Agent Pipeline**:
 
-1. **The Analyst (Fine-Tuned Mistral Large 2)**: Scans the active file or PR diff, enforces strict security policies, and generates a structured JSON report (Violation, Severity, Risk Explanation).
-2. **The Coder (Codestral)**: Ingests the Analyst's report and automatically streams a compliant patch directly into your terminal.
+1. **Fine-Tuned WARD Model**: Scans the active file or PR context, enforces strict security policies, and generates a structured JSON report (Violation, Severity, Risk Explanation).
+2. **Devstral**: Ingests the Analyst's report and automatically streams a compliant patch directly into your terminal using native Vibe tools.
 
 No complex UI. Security audits live exactly where the code lives.
 
 ```mermaid
 graph TD
-    %% Nodi Principali
+    %% Main Nodes
     Start([Initial train.jsonl])
     Orchestrator{scripts/self_improve.py <br> Orchestrator}
 
-    subgraph "🔄 Self-Improving Workflow Loop"
+    subgraph "🔄 Self-Improving Workflow Loop (RLAIF)"
         direction TB
         Train[🏋️ Train Model <br> HF Jobs / Mistral API]
         Eval[⚖️ scripts/evaluate.py <br> LLM-as-Judge]
         Optimize[🧠 scripts/optimize.py <br> Failure Analysis & Data Gen]
     end
 
-    %% Strumenti Esterni
+    %% External Tools
     Judge((Mistral Large Latest <br> Judge Agent))
-    WandB[(Weights & Biases <br> Logs, Artifacts, Metrics)]
+    WandB[(Weights & Biases <br> Logs, Weave Traces, Metrics)]
     Final([🏆 Final Fine-Tuned Model <br> Avg Score >= 4.5])
 
-    %% Collegamenti
+    %% Links
     Start --> Orchestrator
     Orchestrator -->|"Start Iteration"| Train
 
@@ -81,7 +76,7 @@ graph TD
     Orchestrator -->|"If Avg Score < 4.5 <br> Loop Again"| Train
     Orchestrator -->|"If Avg Score >= 4.5 <br> Early Stop"| Final
 
-    %% Stili
+    %% Styles
     style Start fill:#95a5a6,stroke:#7f8c8d,stroke-width:2px,color:#fff
     style Final fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
     style Orchestrator fill:#8e44ad,stroke:#2c3e50,stroke-width:2px,color:#fff
@@ -95,102 +90,130 @@ graph TD
 
 ## 🧠 The AI Pipeline & Repository Structure
 
-We didn't just write a prompt; we built an entire data bootstrapping and fine-tuning pipeline to teach Mistral how to reason about security vulnerabilities.
+We didn't just write a prompt; we built an entire decoupled MLOps pipeline. We separated raw data extraction from business logic to eliminate structural bias via a Global Shuffle.
 
+> 💡**Quick-start:** to regenerate the training dataset from scratch you need a few environment variables and then run the steps below. This is useful if you want to add a new policy or debug a particular extractor.
+
+```bash
+# set your credentials (GitHub, Mistral, W&B)
+export MISTRAL_API_KEY="..." GITHUB_TOKEN="..." WANDB_API_KEY="..."
+cd ai_pipeline
+
+# run all of the extractors & merge logic in one shot
+python run_pipeline.py
+
+# the resulting files live under ai_pipeline/dataset/
+# e.g. train.jsonl, val.jsonl, etc.
+```
+
+You can also invoke the individual scripts manually if you only
+need one stage (1_fetch_github.py, 3_prepare_sard.py, etc.).
 Here is how the project is structured:
 
 ```plaintext
 mistral-vibe/
-├── ai_pipeline/                 # 🧠 WARDSTRAL'S TRAINING ENGINE
-│   ├── 1_fetch_github.py        # Mines GitHub Security Advisories for real-world fixes
-│   ├── 2_fetch_bigvul.py        # Extracts and balances vulnerable/safe pairs from BigVul
-│   ├── 3_pair_datasets.py       # "Teacher-Student" bootstrapping: uses Mistral Large to write plain-English risk explanations
-│   ├── 4_append_sard.py         # Fills edge-case gaps (deserialization, eval) using SARD
-│   ├── run_pipeline.py          # Formats everything into conversational JSONL for Mistral API
-│   └── dataset/                 # Holds the generated train/val/test splits
+├── ai_pipeline/                 # 🧠 WARDSTRAL'S DATA ENGINE (Decoupled Architecture)
+│   ├── 1_fetch_github.py        # Mines GitHub Security Advisories
+│   ├── 2_fetch_bigvul.py        # Fetches raw BigVul dataset from Hugging Face
+│   ├── 3_prepare_sard.py        # Prepares SARD synthetic data for edge cases
+│   ├── 4_merge_and_split.py     # "The Brain": Pairs CWEs, Formats ChatML, Global Shuffle
+│   ├── 5_assign_severity.py     # LLM-based enrichment (Low/Medium/High/Critical)
+│   ├── 6_evaluation.py          # Validation scoring
+│   ├── 7_remediation.py         # Patch logic testing
+│   └── run_pipeline.py          # Orchestrates steps 1 -> 4
+│
+├── scripts/                     # ⚖️ MLOps & EVALUATION
+│   ├── evaluate.py              # W&B LLM-as-a-Judge benchmark script
+│   └── self_improve.py          # RLAIF orchestrator loop
 │
 ├── vibe/cli/                    # 💻 VIBE CLI INTEGRATION
 │   ├── commands.py              # Registers the new `/security` slash command
-│   └── textual_ui/app.py        # Implements the `_security_command` handler & Agent handoff
-│
-└── ...                          # Original Mistral Vibe source code
+│   └── textual_ui/app.py        # Implements `_fix_security()` Dual-Agent handoff
 ```
 
 ### 🛠️ How the Fine-Tuning Works
 
-If you want to reproduce our fine-tuning process:
+To reproduce our fine-tuning and data orchestration process:
 
-1. Navigate to the `ai_pipeline` folder.
-2. Add your API keys to the `.env` file.
-3. Run the pipeline script to gather raw data, bootstrap labels using Mistral Large, and dispatch the fine-tuning job:
+1. Setup your `.env` with `MISTRAL_API_KEY`, `GITHUB_TOKEN`, and `WANDB_API_KEY` as above.
+2. Generate the dataset using the micro-extractors:
+   ```bash
+   cd ai_pipeline
+   python run_pipeline.py
+   ```
+
+3. Switch to the `scripts` directory and start the self-improvement loop.
+   The loop will launch training jobs, evaluate with the judge model, and
+   automatically augment the data until the average score exceeds 4.5:
+   ```bash
+   cd ../scripts
+   python self_improve.py \  # see --help for dataset/model flags
+       --dataset-repo=username/security-vuln-dataset \
+       --model=some-base
+   ```
+
+4. Once you have a final model you can launch a standalone inference job:
+   ```bash
+   python launch_inference.py --model=ward-final --output=ward.jsonl
+   ```
+
+The helper scripts (`launch_finetune.py`, `launch_inference.py`,
+`judge_gemini.py`) all accept `--dataset-repo` and other options; run them
+with `--help` to explore the CLI.
+
+
+### 🎯 Usage: The /security Command
+For local development and testing, install the project in editable mode:
 
 ```bash
-python run_pipeline.py
-python ../scripts/finetune_security.py --train dataset/train.jsonl --val dataset/val.jsonl
+pip install -e .
+vibe         # start the interactive CLI
 ```
 
+Once inside the UI, open a vulnerable file and type:
 
-
-## 🎯 Usage: The `/security` Command
-
-Once installed, simply open Mistral Vibe in your project folder and type the command:
-
-```text
+```plaintext
 > /security
 ```
 
-**What happens next:**
-1. **Context Gathering:** Vibe grabs your current file/diff.
-2. **Analysis:** The fine-tuned Wardstral model identifies vulnerabilities (e.g., SQL Injection, Hardcoded Secrets).
-3. **Reporting:** Prints a clean, markdown-formatted risk explanation.
-4. **Remediation:** The native Vibe Agent immediately starts streaming the fixed, compliant code to patch the vulnerability.
+Alternatively, you can run the same operation non‑interactively with the
+command‑line flag (useful for CI or editors):
 
-
-
-## ⚙️ Standard Vibe Installation & Setup
-
-Since Wardstral is built directly into Mistral Vibe, the installation process remains the same as the original CLI.
-
-### One-line install (recommended)
-
-**Linux and macOS**
 ```bash
-curl -LsSf https://mistral.ai/vibe/install.sh | bash
+vibe -fix_security path/to/file.c
 ```
 
-**Windows (Using uv)**
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-uv tool install mistral-vibe
+The flow is identical in both cases:
+
+1. **Context Gathering:** Vibe grabs your current active code or the
+   contents of the specified file.
+2. **Analysis:** the fine‑tuned `WARD` model produces a structured JSON
+   audit report describing each violation, its severity, and a rationale.
+3. **Remediation:** the `Codestral` agent reads the report and streams a
+   patch back through Vibe's native tools (`write_file`,
+   `search_replace`, etc.), automatically editing the code in place.
+
+You can inspect the implementation in `vibe/cli/commands.py` (command
+registration) and `vibe/cli/textual_ui/app.py` (handler and agent logic).
+A programmatic entry point is exposed as
+`vibe.commands._fix_security()` if you want to reuse the engine from a
+custom script.
+
+Below is a simple before/after example produced by `/security`:
+
+```diff
+--- vulnerable.c
++++ patched.c
+@@
+-    strcpy(buf, input);            // unsafe buffer copy
++    strncpy(buf, input, sizeof buf); // fixed with bounds check
 ```
 
-### Quick Start
-Navigate to your project's root directory:
-```bash
-cd /path/to/your/project
-```
+This patch streaming behaviour is what makes Wardstral feel native; the
+analysis and fix occur in the same session where you write code.
 
-Run Vibe:
-```bash
-vibe
-```
+### 🏆 Mistral AI Worldwide Hackathon 2026
 
-Type `/security` to trigger the Wardstral Security Enforcer!
-
-
-
-## 📊 Evaluation & Tracking
-
-We track the model's performance using **Weights & Biases**. We evaluate the fine-tuned model against a baseline across:
-
-* **Precision & Recall** for specific CWE policy violations.
-* **False Positive Rate** on safe code (enforced via dataset balancing).
-* **Patch Quality Score** (Using LLM-as-a-judge to ensure the suggested patch actually compiles and fixes the flaw).
-
-
-
-## 📄 License
-
-Copyright 2026 Mistral AI & Wardstral Team
-
-Licensed under the Apache License, Version 2.0 (the "License"). See the `LICENSE` file for the full license text.
+This product — including the data‑engineering pipeline, fine‑tuning loops, and the `/security` CLI integration — was conceived, coded, and documented in a single 24‑hour sprint during the
+[Mistral AI Worldwide Hackathon](https://mistral.ai) running from Feb 28 to Mar 1, 2026. The team behind Wardstral comprised
+**Federico Giorgi**, **Tommaso Ravasio**, and **Ratnam Shah**.
