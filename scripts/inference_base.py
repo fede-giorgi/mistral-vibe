@@ -3,7 +3,6 @@
 # dependencies = [
 #     "torch",
 #     "transformers>=4.46.0,<4.48",
-#     "peft>=0.13.0,<0.15",
 #     "datasets",
 #     "bitsandbytes",
 #     "accelerate",
@@ -12,13 +11,13 @@
 # ]
 # ///
 """
-Run inference with the fine-tuned LoRA model on HF Jobs.
+Run inference with the BASE model (no LoRA) on HF Jobs.
 
-Loads base model + LoRA adapter, runs inference on the test set,
-and uploads results as a JSON artifact to the HF dataset repo.
+Same test set and prompts as inference_hf.py, but without the LoRA adapter.
+Uploads results as eval/inference_results_base.json for comparison.
 
-Usage (runs on HF Jobs, launched by launch_inference.py):
-    Env vars: HF_TOKEN, DATASET_REPO, OUTPUT_REPO
+Usage (runs on HF Jobs):
+    Env vars: HF_TOKEN, DATASET_REPO, SAMPLE_SIZE
 """
 
 import json
@@ -27,11 +26,10 @@ import sys
 import time
 import traceback
 
-# Force unbuffered stdout so HF Jobs log API picks up prints immediately
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
-print("=== inference_hf.py starting ===", flush=True)
+print("=== inference_base.py starting ===", flush=True)
 
 try:
     import torch
@@ -47,14 +45,13 @@ try:
         )
 
     from huggingface_hub import HfApi, login
-    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
     from datasets import load_dataset
 
     HF_TOKEN = os.environ["HF_TOKEN"]
     DATASET_REPO = os.environ["DATASET_REPO"]
-    OUTPUT_REPO = os.environ["OUTPUT_REPO"]
     SAMPLE_SIZE = int(os.environ.get("SAMPLE_SIZE", "20"))
+    BASE_MODEL = "mistralai/Ministral-8B-Instruct-2410"
 
     login(token=HF_TOKEN)
 
@@ -64,27 +61,16 @@ try:
     n_samples = min(SAMPLE_SIZE, len(dataset))
     print(f"  Loaded {len(dataset)} test examples, using {n_samples}", flush=True)
 
-    # Quick sanity check on dataset structure
-    sample = dataset[0]
-    print(f"  Sample keys: {list(sample.keys())}", flush=True)
-    msgs = sample["messages"]
-    print(f"  Messages type: {type(msgs)}, len: {len(msgs)}", flush=True)
-    if msgs:
-        print(
-            f"  First message type: {type(msgs[0])}, keys: {list(msgs[0].keys()) if isinstance(msgs[0], dict) else 'N/A'}",
-            flush=True,
-        )
-
-    # Load tokenizer from LoRA adapter repo
-    print(f"Loading tokenizer from {OUTPUT_REPO}...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(OUTPUT_REPO, token=HF_TOKEN)
+    # Load tokenizer from the base model
+    print(f"Loading tokenizer from {BASE_MODEL}...", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, token=HF_TOKEN)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
     print("  Tokenizer loaded.", flush=True)
 
-    # Load base model in 4-bit
-    print("Loading base model in 4-bit quantization...", flush=True)
+    # Load base model in 4-bit (NO LoRA)
+    print(f"Loading base model {BASE_MODEL} in 4-bit quantization...", flush=True)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -92,19 +78,11 @@ try:
         bnb_4bit_compute_dtype=torch.float16,
     )
     model = AutoModelForCausalLM.from_pretrained(
-        "mistralai/Ministral-8B-Instruct-2410",
-        quantization_config=bnb_config,
-        device_map="auto",
-        token=HF_TOKEN,
+        BASE_MODEL, quantization_config=bnb_config, device_map="auto", token=HF_TOKEN
     )
-    device = torch.device("cuda:0")
-    print(f"  Base model loaded. Target device: {device}", flush=True)
-
-    # Load LoRA adapter
-    print(f"Loading LoRA adapter from {OUTPUT_REPO}...", flush=True)
-    model = PeftModel.from_pretrained(model, OUTPUT_REPO, token=HF_TOKEN)
     model.eval()
-    print("  LoRA adapter loaded. Model ready!", flush=True)
+    device = torch.device("cuda:0")
+    print(f"  Base model loaded (NO LoRA). Device: {device}", flush=True)
 
     # Run inference
     results = []
@@ -112,7 +90,6 @@ try:
         example = dataset[idx]
         messages = example["messages"]
 
-        # Extract messages (HF datasets returns list-of-dicts)
         user_msg = ""
         assistant_msg = ""
         system_msg = "You are a senior security engineer. Analyze the provided codebase snippet and output a detailed vulnerability explanation."
@@ -135,10 +112,9 @@ try:
                 system_msg = content
 
         if not user_msg:
-            print(f"[{idx + 1}/{n_samples}] SKIP — no user message found", flush=True)
+            print(f"[{idx + 1}/{n_samples}] SKIP — no user message", flush=True)
             continue
 
-        # Build prompt
         chat_messages = [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
@@ -184,25 +160,25 @@ try:
         })
 
     # Save results
-    output_path = "/tmp/inference_results.json"
+    output_path = "/tmp/inference_results_base.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    print(
-        f"\nInference complete. {len(results)} results saved to {output_path}",
-        flush=True,
-    )
+    print(f"\nInference complete. {len(results)} results saved.", flush=True)
 
     # Upload results to HF dataset repo
     api = HfApi(token=HF_TOKEN)
     api.upload_file(
         path_or_fileobj=output_path,
-        path_in_repo="eval/inference_results.json",
+        path_in_repo="eval/inference_results_base.json",
         repo_id=DATASET_REPO,
         repo_type="dataset",
         token=HF_TOKEN,
     )
-    print(f"Results uploaded to {DATASET_REPO}/eval/inference_results.json", flush=True)
+    print(
+        f"Results uploaded to {DATASET_REPO}/eval/inference_results_base.json",
+        flush=True,
+    )
     print("=== DONE ===", flush=True)
 
 except Exception:
