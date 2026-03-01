@@ -1,4 +1,4 @@
-# 🛡️ Ward: Automated Security Policy Enforcement for Mistral Vibe
+# 🛡️ Wardstral: Automated Security Policy Enforcement for Mistral Vibe
 
 [![PyPI Version](https://img.shields.io/pypi/v/mistral-vibe)](https://pypi.org/project/mistral-vibe)
 [![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/release/python-3120/)
@@ -17,7 +17,7 @@
 ```
 
 
-**Ward** is a specialized fork of Mistral Vibe, built to bridge the gap between code generation and security compliance.
+**Wardstral** is a specialized fork of Mistral Vibe, built to bridge the gap between code generation and security compliance.
 
 > 💡 **Note:** This project is built on top of [Mistral Vibe](https://github.com/mistralai/mistral-vibe). You can find the original, unmodified Mistral Vibe README [here](https://github.com/mistralai/mistral-vibe/blob/main/README.md).
 
@@ -25,7 +25,7 @@
 
 ## 📑 Table of Contents
 
-- [🚀 What is Ward?](#-what-is-ward)
+- [🚀 What is Wardstral?](#-what-is-Wardstral)
 - [🧠 The AI Pipeline & Repository Structure](#-the-ai-pipeline--repository-structure)
   - [🛠️ How the Fine-Tuning Works](#️-how-the-fine-tuning-works)
 - [🎯 Usage: The `/security` Command](#-usage-the-security-command)
@@ -36,11 +36,11 @@
 - [📄 License](#-license)
 
 
-## 🚀 What is Ward?
+## 🚀 What is Wardstral?
 
 Modern Engineering Managers want to enforce custom security policies (e.g., "No eval()", "Mandatory Parameterization") across PRs, but base LLMs are inconsistent and struggle with structured policy reasoning.
 
-Ward solves this by introducing a native `/security` command into Mistral Vibe. It uses a **Dual-Agent Pipeline**:
+Wardstral solves this by introducing a native `/security` command into Mistral Vibe. It uses a **Dual-Agent Pipeline**:
 
 1. **The Analyst (Fine-Tuned Mistral Large 2)**: Scans the active file or PR diff, enforces strict security policies, and generates a structured JSON report (Violation, Severity, Risk Explanation).
 2. **The Coder (Codestral)**: Ingests the Analyst's report and automatically streams a compliant patch directly into your terminal.
@@ -101,7 +101,7 @@ Here is how the project is structured:
 
 ```plaintext
 mistral-vibe/
-├── ai_pipeline/                 # 🧠 WARD'S TRAINING ENGINE
+├── ai_pipeline/                 # 🧠 WARDSTRAL'S TRAINING ENGINE
 │   ├── 1_fetch_github.py        # Mines GitHub Security Advisories for real-world fixes
 │   ├── 2_fetch_bigvul.py        # Extracts and balances vulnerable/safe pairs from BigVul
 │   ├── 3_pair_datasets.py       # "Teacher-Student" bootstrapping: uses Mistral Large to write plain-English risk explanations
@@ -141,7 +141,7 @@ Once installed, simply open Mistral Vibe in your project folder and type the com
 
 **What happens next:**
 1. **Context Gathering:** Vibe grabs your current file/diff.
-2. **Analysis:** The fine-tuned Ward model identifies vulnerabilities (e.g., SQL Injection, Hardcoded Secrets).
+2. **Analysis:** The fine-tuned Wardstral model identifies vulnerabilities (e.g., SQL Injection, Hardcoded Secrets).
 3. **Reporting:** Prints a clean, markdown-formatted risk explanation.
 4. **Remediation:** The native Vibe Agent immediately starts streaming the fixed, compliant code to patch the vulnerability.
 
@@ -149,7 +149,7 @@ Once installed, simply open Mistral Vibe in your project folder and type the com
 
 ## ⚙️ Standard Vibe Installation & Setup
 
-Since Ward is built directly into Mistral Vibe, the installation process remains the same as the original CLI.
+Since Wardstral is built directly into Mistral Vibe, the installation process remains the same as the original CLI.
 
 ### One-line install (recommended)
 
@@ -175,7 +175,7 @@ Run Vibe:
 vibe
 ```
 
-Type `/security` to trigger the Ward Security Enforcer!
+Type `/security` to trigger the Wardstral Security Enforcer!
 
 
 
@@ -191,6 +191,6 @@ We track the model's performance using **Weights & Biases**. We evaluate the fin
 
 ## 📄 License
 
-Copyright 2026 Mistral AI & Ward Team
+Copyright 2026 Mistral AI & Wardstral Team
 
 Licensed under the Apache License, Version 2.0 (the "License"). See the `LICENSE` file for the full license text.
