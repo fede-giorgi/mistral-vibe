@@ -47,6 +47,50 @@ Ward solves this by introducing a native `/security` command into Mistral Vibe. 
 
 No complex UI. Security audits live exactly where the code lives.
 
+```mermaid
+graph TD
+    %% Nodi Principali
+    Start([Initial train.jsonl])
+    Orchestrator{scripts/self_improve.py <br> Orchestrator}
+
+    subgraph "🔄 Self-Improving Workflow Loop"
+        direction TB
+        Train[🏋️ Train Model <br> HF Jobs / Mistral API]
+        Eval[⚖️ scripts/evaluate.py <br> LLM-as-Judge]
+        Optimize[🧠 scripts/optimize.py <br> Failure Analysis & Data Gen]
+    end
+
+    %% Strumenti Esterni
+    Judge((Mistral Large Latest <br> Judge Agent))
+    WandB[(Weights & Biases <br> Logs, Artifacts, Metrics)]
+    Final([🏆 Final Fine-Tuned Model <br> Avg Score >= 4.5])
+
+    %% Collegamenti
+    Start --> Orchestrator
+    Orchestrator -->|"Start Iteration"| Train
+
+    Train -- "Fine-Tuned Model + Test Data" --> Eval
+    Eval <-->|"Scores on 5 Dimensions"| Judge
+    Eval -.->|"Logs Tables & Scalars"| WandB
+
+    Eval -- "Failures & Patterns" --> Optimize
+    Optimize <-->|"Generates Synthetic Fixes"| Judge
+
+    Optimize -- "Augmented train.jsonl" --> Orchestrator
+
+    Orchestrator -->|"If Avg Score < 4.5 <br> Loop Again"| Train
+    Orchestrator -->|"If Avg Score >= 4.5 <br> Early Stop"| Final
+
+    %% Stili
+    style Start fill:#95a5a6,stroke:#7f8c8d,stroke-width:2px,color:#fff
+    style Final fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style Orchestrator fill:#8e44ad,stroke:#2c3e50,stroke-width:2px,color:#fff
+    style Train fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    style Eval fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff
+    style Optimize fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+    style Judge fill:#34495e,stroke:#2c3e50,stroke-width:2px,color:#fff
+    style WandB fill:#f1c40f,stroke:#f39c12,stroke-width:2px,color:#000
+```
 
 
 ## 🧠 The AI Pipeline & Repository Structure
