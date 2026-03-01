@@ -43,7 +43,7 @@ EPOCHS = int(os.environ.get("EPOCHS", "3"))
 LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "2e-5"))
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "1"))
 GRADIENT_ACCUMULATION_STEPS = int(os.environ.get("GRADIENT_ACCUMULATION_STEPS", "16"))
-MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "1024"))
+MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "2048"))
 
 login(token=HF_TOKEN)
 
