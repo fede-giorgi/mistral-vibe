@@ -26,7 +26,18 @@ RETRY_DELAY = 5  # seconds
 
 # Initialize clients
 client = MistralClient(api_key=API_KEY)
-wandb.init(project="ward-security-benchmark", name="base-vs-finetuned")
+
+# Initialize W&B with Weave integration
+wandb.init(
+    project="ward-security-benchmark", 
+    name="base-vs-finetuned",
+    config={
+        "base_model": BASE_MODEL,
+        "finetuned_model": FINETUNED_MODEL,
+        "test_data_path": TEST_DATA_PATH,
+        "sample_size": 100
+    }
+)
 
 class Severity(Enum):
     LOW = "low"
@@ -227,48 +238,64 @@ def evaluate_model_performance(test_data: List[Dict[str, Any]], sample_size: Opt
     results = []
     data_subset = test_data[:sample_size] if sample_size else test_data
 
-    for entry in tqdm(data_subset, desc="Evaluating models"):
-        try:
-            code = entry["messages"][0]["content"]
-            ground_truth = json.loads(entry["messages"][1]["content"])
+    # Create Weave trace for evaluation
+    with wandb.weave.trace("model_evaluation") as trace:
+        for entry in tqdm(data_subset, desc="Evaluating models"):
+            try:
+                code = entry["messages"][0]["content"]
+                ground_truth = json.loads(entry["messages"][1]["content"])
 
-            # Query both models
-            base_out = get_model_response(BASE_MODEL, code)
-            ft_out = get_model_response(FINETUNED_MODEL, code)
+                # Create Weave span for this test case
+                with trace.span(f"test_case_{len(results)}") as span:
+                    span.log({"code_length": len(code), "ground_truth": ground_truth})
 
-            # Skip if errors occurred
-            if "error" in base_out or "error" in ft_out:
-                logger.warning(f"Skipping entry due to API errors")
+                    # Query both models
+                    base_out = get_model_response(BASE_MODEL, code)
+                    ft_out = get_model_response(FINETUNED_MODEL, code)
+
+                    # Skip if errors occurred
+                    if "error" in base_out or "error" in ft_out:
+                        logger.warning(f"Skipping entry due to API errors")
+                        span.log({"status": "skipped", "reason": "API error"})
+                        continue
+
+                    # Evaluate vulnerability detection
+                    base_detection = evaluate_vulnerability_detection(base_out, ground_truth)
+                    ft_detection = evaluate_vulnerability_detection(ft_out, ground_truth)
+
+                    # Evaluate severity (only for vulnerable cases)
+                    base_severity = evaluate_severity_classification(base_out, ground_truth) if ground_truth.get("is_vulnerable") else None
+                    ft_severity = evaluate_severity_classification(ft_out, ground_truth) if ground_truth.get("is_vulnerable") else None
+
+                    # Evaluate fix quality (only for vulnerable cases)
+                    base_fix = evaluate_fix_quality(base_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
+                    ft_fix = evaluate_fix_quality(ft_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
+
+                    result = {
+                        "code": code,
+                        "ground_truth": ground_truth,
+                        "base_model": base_out,
+                        "finetuned_model": ft_out,
+                        "base_detection": base_detection,
+                        "ft_detection": ft_detection,
+                        "base_severity": base_severity,
+                        "ft_severity": ft_severity,
+                        "base_fix": base_fix,
+                        "ft_fix": ft_fix
+                    }
+                    
+                    results.append(result)
+                    span.log({
+                        "status": "completed",
+                        "base_correct": base_detection["correct"],
+                        "ft_correct": ft_detection["correct"],
+                        "ft_severity_correct": ft_severity["correct"] if ft_severity else None,
+                        "ft_fix_score": ft_fix["score"] if ft_fix else None
+                    })
+
+            except Exception as e:
+                logger.error(f"Error processing entry: {str(e)}")
                 continue
-
-            # Evaluate vulnerability detection
-            base_detection = evaluate_vulnerability_detection(base_out, ground_truth)
-            ft_detection = evaluate_vulnerability_detection(ft_out, ground_truth)
-
-            # Evaluate severity (only for vulnerable cases)
-            base_severity = evaluate_severity_classification(base_out, ground_truth) if ground_truth.get("is_vulnerable") else None
-            ft_severity = evaluate_severity_classification(ft_out, ground_truth) if ground_truth.get("is_vulnerable") else None
-
-            # Evaluate fix quality (only for vulnerable cases)
-            base_fix = evaluate_fix_quality(base_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
-            ft_fix = evaluate_fix_quality(ft_out, ground_truth, code) if ground_truth.get("is_vulnerable") else None
-
-            results.append({
-                "code": code,
-                "ground_truth": ground_truth,
-                "base_model": base_out,
-                "finetuned_model": ft_out,
-                "base_detection": base_detection,
-                "ft_detection": ft_detection,
-                "base_severity": base_severity,
-                "ft_severity": ft_severity,
-                "base_fix": base_fix,
-                "ft_fix": ft_fix
-            })
-
-        except Exception as e:
-            logger.error(f"Error processing entry: {str(e)}")
-            continue
 
     return results
 
@@ -336,27 +363,34 @@ def create_wandb_table(results: List[Dict[str, Any]]) -> wandb.Table:
         W&B Table object
     """
     table = wandb.Table(columns=[
-        "Code", "GT Vulnerable", "GT Severity", "Base Correct", 
-        "FT Correct", "FT Severity Correct", "FT Fix Score"
+        "Code", "GT Vulnerable", "GT Severity", "GT Violation Type",
+        "Base Correct", "FT Correct", "FT Severity Correct", "FT Fix Score",
+        "FT Fix Justification", "FT Fix Confidence"
     ])
 
     for r in results:
         gt_vuln = r["ground_truth"].get("is_vulnerable", False)
         gt_severity = r["ground_truth"].get("severity", "N/A")
+        gt_violation = r["ground_truth"].get("violation_type", "N/A")
         
         base_correct = r["base_detection"]["correct"]
         ft_correct = r["ft_detection"]["correct"]
         ft_severity_correct = r["ft_severity"]["correct"] if r["ft_severity"] else None
         ft_fix_score = r["ft_fix"]["score"] if r["ft_fix"] else None
+        ft_fix_justification = r["ft_fix"]["justification"] if r["ft_fix"] else "N/A"
+        ft_fix_confidence = r["ft_fix"]["confidence"] if r["ft_fix"] else 0.0
 
         table.add_data(
             r["code"][:100] + "..." if len(r["code"]) > 100 else r["code"],
             gt_vuln,
             gt_severity,
+            gt_violation,
             base_correct,
             ft_correct,
             ft_severity_correct,
-            ft_fix_score
+            ft_fix_score,
+            ft_fix_justification,
+            ft_fix_confidence
         )
 
     return table
@@ -387,6 +421,25 @@ def main():
         # Log all metrics
         wandb.log(metrics)
 
+        # Log additional metrics for better visualization
+        wandb.log({
+            "base_vs_ft/detection_accuracy": {
+                "base": calculate_metrics_for_model(results, "base")["detection_accuracy"],
+                "finetuned": metrics["detection_accuracy"]
+            },
+            "base_vs_ft/detection_f1": {
+                "base": calculate_metrics_for_model(results, "base")["detection_f1"],
+                "finetuned": metrics["detection_f1"]
+            },
+            "base_vs_ft/avg_fix_score": {
+                "base": calculate_metrics_for_model(results, "base")["avg_fix_score"],
+                "finetuned": metrics["avg_fix_score"]
+            }
+        })
+
+        # Create W&B Report
+        create_wandb_report(results, metrics)
+
         logger.info(f"Benchmark completed successfully!")
         logger.info(f"Detection Accuracy: {metrics['detection_accuracy']}")
         logger.info(f"Detection F1: {metrics['detection_f1']}")
@@ -399,6 +452,152 @@ def main():
         logger.error(f"Evaluation failed: {str(e)}")
         wandb.log({"error": str(e)})
         raise
+
+def calculate_metrics_for_model(results: List[Dict[str, Any]], model_type: str = "ft") -> Dict[str, float]:
+    """
+    Calculate metrics for a specific model (base or finetuned).
+
+    Args:
+        results: Evaluation results
+        model_type: "base" or "ft"
+
+    Returns:
+        Dictionary containing metrics for the specified model
+    """
+    if not results:
+        return {
+            "detection_accuracy": 0.0,
+            "detection_precision": 0.0,
+            "detection_recall": 0.0,
+            "detection_f1": 0.0,
+            "detection_fpr": 0.0,
+            "severity_accuracy": 0.0,
+            "avg_fix_score": 0.0
+        }
+
+    # Detection metrics
+    total_tp = sum(r[f"{model_type}_detection"]["tp"] for r in results)
+    total_fp = sum(r[f"{model_type}_detection"]["fp"] for r in results)
+    total_tn = sum(r[f"{model_type}_detection"]["tn"] for r in results)
+    total_fn = sum(r[f"{model_type}_detection"]["fn"] for r in results)
+
+    total_correct = sum(r[f"{model_type}_detection"]["correct"] for r in results)
+    detection_accuracy = total_correct / len(results)
+
+    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    fpr = total_fp / (total_fp + total_tn) if (total_fp + total_tn) > 0 else 0
+
+    # Severity metrics (only for vulnerable cases)
+    vulnerable_results = [r for r in results if r["ground_truth"].get("is_vulnerable")]
+    severity_correct = sum(1 for r in vulnerable_results if r[f"{model_type}_severity"]["correct"]) if vulnerable_results else 0
+    severity_accuracy = severity_correct / len(vulnerable_results) if vulnerable_results else 0
+
+    # Fix quality metrics (only for vulnerable cases)
+    avg_fix_score = sum(r[f"{model_type}_fix"]["score"] for r in vulnerable_results) / len(vulnerable_results) if vulnerable_results else 0
+
+    return {
+        "detection_accuracy": round(detection_accuracy, 4),
+        "detection_precision": round(precision, 4),
+        "detection_recall": round(recall, 4),
+        "detection_f1": round(f1, 4),
+        "detection_fpr": round(fpr, 4),
+        "severity_accuracy": round(severity_accuracy, 4),
+        "avg_fix_score": round(avg_fix_score, 4)
+    }
+
+def create_wandb_report(results: List[Dict[str, Any]], metrics: Dict[str, float]):
+    """
+    Create a W&B Report summarizing the evaluation.
+
+    Args:
+        results: Evaluation results
+        metrics: Calculated metrics
+    """
+    # Calculate base model metrics for comparison
+    base_metrics = calculate_metrics_for_model(results, "base")
+
+    # Create report content
+    report_content = f"""
+# Security Model Evaluation Report
+
+## Overview
+This report summarizes the evaluation of a security-focused language model, comparing a base model against a fine-tuned version across three dimensions:
+1. Vulnerability Detection (Binary Classification)
+2. Severity Classification (Categorical)
+3. Fix Quality Evaluation (LLM-as-a-Judge)
+
+## Test Dataset
+- Total samples evaluated: {len(results)}
+- Vulnerable samples: {sum(1 for r in results if r["ground_truth"].get("is_vulnerable"))}
+- Non-vulnerable samples: {sum(1 for r in results if not r["ground_truth"].get("is_vulnerable"))}
+
+## Model Comparison
+
+### Vulnerability Detection
+| Metric | Base Model | Fine-Tuned Model | Improvement |
+|--------|------------|------------------|-------------|
+| Accuracy | {base_metrics['detection_accuracy']} | {metrics['detection_accuracy']} | {metrics['detection_accuracy'] - base_metrics['detection_accuracy']:.4f} |
+| Precision | {base_metrics['detection_precision']} | {metrics['detection_precision']} | {metrics['detection_precision'] - base_metrics['detection_precision']:.4f} |
+| Recall | {base_metrics['detection_recall']} | {metrics['detection_recall']} | {metrics['detection_recall'] - base_metrics['detection_recall']:.4f} |
+| F1 Score | {base_metrics['detection_f1']} | {metrics['detection_f1']} | {metrics['detection_f1'] - base_metrics['detection_f1']:.4f} |
+| False Positive Rate | {base_metrics['detection_fpr']} | {metrics['detection_fpr']} | {metrics['detection_fpr'] - base_metrics['detection_fpr']:.4f} |
+
+### Severity Classification
+| Metric | Base Model | Fine-Tuned Model | Improvement |
+|--------|------------|------------------|-------------|
+| Accuracy | {base_metrics['severity_accuracy']} | {metrics['severity_accuracy']} | {metrics['severity_accuracy'] - base_metrics['severity_accuracy']:.4f} |
+
+### Fix Quality
+| Metric | Base Model | Fine-Tuned Model | Improvement |
+|--------|------------|------------------|-------------|
+| Avg Fix Score | {base_metrics['avg_fix_score']} | {metrics['avg_fix_score']} | {metrics['avg_fix_score'] - base_metrics['avg_fix_score']:.4f} |
+
+## Key Findings
+
+### Detection Performance
+- The fine-tuned model shows {'improved' if metrics['detection_f1'] > base_metrics['detection_f1'] else 'similar or degraded'} F1 score compared to the base model
+- {'Increased' if metrics['detection_recall'] > base_metrics['detection_recall'] else 'No significant change in'} recall indicates {'better' if metrics['detection_recall'] > base_metrics['detection_recall'] else 'similar'} ability to identify vulnerabilities
+- {'Reduced' if metrics['detection_fpr'] < base_metrics['detection_fpr'] else 'No significant change in'} false positive rate suggests {'improved' if metrics['detection_fpr'] < base_metrics['detection_fpr'] else 'similar'} precision
+
+### Severity Classification
+- {'Improved' if metrics['severity_accuracy'] > base_metrics['severity_accuracy'] else 'Similar or degraded'} severity classification accuracy
+- This is crucial for prioritizing security fixes in production
+
+### Fix Quality
+- Average fix score of {metrics['avg_fix_score']} on a 1-5 scale
+- {'Higher' if metrics['avg_fix_score'] > base_metrics['avg_fix_score'] else 'Similar or lower'} quality fixes compared to base model
+- Fixes are evaluated on correctness, security, and realism
+
+## Recommendations
+
+1. **Deployment**: The fine-tuned model {'can be deployed' if metrics['detection_f1'] > base_metrics['detection_f1'] else 'may not provide significant benefits over the base model'}
+2. **Monitoring**: Track false positive/negative rates in production
+3. **Iteration**: Focus on improving {'recall' if metrics['detection_recall'] < 0.9 else 'precision'} for better balance
+4. **Fix Quality**: Continue refining fix generation based on judge feedback
+
+## Technical Details
+
+- Evaluation framework: Weights & Biases with Weave tracing
+- Test data: {TEST_DATA_PATH}
+- Models evaluated: {BASE_MODEL} (base), {FINETUNED_MODEL} (fine-tuned)
+- Sample size: 100
+- Evaluation date: {wandb.run.start_time.strftime('%Y-%m-%d %H:%M:%S')}
+"""
+
+    # Create and save the report
+    with open("evaluation_report.md", "w") as f:
+        f.write(report_content)
+
+    # Log the report to W&B
+    report_artifact = wandb.Artifact(
+        name="evaluation_report",
+        type="report",
+        description="Comprehensive evaluation report comparing base and fine-tuned security models"
+    )
+    report_artifact.add_file("evaluation_report.md")
+    wandb.log_artifact(report_artifact)
 
 if __name__ == "__main__":
     main()
