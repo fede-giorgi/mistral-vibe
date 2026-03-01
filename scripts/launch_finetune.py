@@ -20,13 +20,26 @@ def upload_dataset(api: HfApi, repo_id: str, token: str) -> None:
     """Upload train/val/test JSONL files to a HF dataset repo."""
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True, token=token)
 
-    for split in ["train", "val", "test"]:
-        local_path = Path(f"ai_pipeline/dataset/{split}.jsonl")
+    # Remove stale val.jsonl if it exists (was renamed to validation.jsonl)
+    try:
+        api.delete_file(
+            path_in_repo="data/val.jsonl",
+            repo_id=repo_id,
+            repo_type="dataset",
+            token=token,
+        )
+        print("Removed stale data/val.jsonl from Hub")
+    except Exception:
+        pass  # File doesn't exist, nothing to clean up
+
+    split_renames = {"train": "train", "val": "validation", "test": "test"}
+    for local_split, hub_split in split_renames.items():
+        local_path = Path(f"ai_pipeline/dataset/{local_split}.jsonl")
         if local_path.exists():
-            print(f"Uploading {local_path} -> {repo_id}/{split}.jsonl")
+            print(f"Uploading {local_path} -> {repo_id}/data/{hub_split}.jsonl")
             api.upload_file(
                 path_or_fileobj=local_path,
-                path_in_repo=f"data/{split}.jsonl",
+                path_in_repo=f"data/{hub_split}.jsonl",
                 repo_id=repo_id,
                 repo_type="dataset",
                 token=token,
@@ -100,10 +113,7 @@ def main() -> None:
             "EPOCHS": str(args.epochs),
             "LEARNING_RATE": str(args.learning_rate),
         },
-        secrets={
-            "HF_TOKEN": hf_token,
-            "WANDB_API_KEY": wandb_key,
-        },
+        secrets={"HF_TOKEN": hf_token, "WANDB_API_KEY": wandb_key},
         timeout=args.timeout,
     )
 

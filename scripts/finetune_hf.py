@@ -25,6 +25,7 @@ are pushed to HF Hub when training completes.
 
 import os
 
+import torch
 import wandb
 from datasets import load_dataset
 from huggingface_hub import login
@@ -42,7 +43,7 @@ EPOCHS = int(os.environ.get("EPOCHS", "3"))
 LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "2e-5"))
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "1"))
 GRADIENT_ACCUMULATION_STEPS = int(os.environ.get("GRADIENT_ACCUMULATION_STEPS", "16"))
-MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "2048"))
+MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "1024"))
 
 login(token=HF_TOKEN)
 
@@ -76,6 +77,7 @@ bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_quant_type="nf4",
     bnb_4bit_use_double_quant=True,
+    bnb_4bit_compute_dtype=torch.float16,
 )
 
 # --- Load model + tokenizer ---
@@ -83,12 +85,43 @@ print(f"Loading model: {MODEL_NAME}...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
+tokenizer.padding_side = "right"
+
+
+def apply_chat_template(example):
+    example["text"] = tokenizer.apply_chat_template(example["messages"], tokenize=False)
+    return example
+
+
+print("Applying chat template to datasets...")
+train_dataset = train_dataset.map(apply_chat_template)
+val_dataset = val_dataset.map(apply_chat_template)
+
+# Filter out extreme outliers that cause OOM during tokenization.
+# Examples longer than 4x max_seq_length are too large to be useful after truncation
+# and their raw token count causes memory spikes during the mapping step.
+TOKEN_LIMIT = MAX_SEQ_LENGTH * 4
+
+
+def is_within_token_limit(example: dict) -> bool:
+    return len(tokenizer.encode(example["text"])) <= TOKEN_LIMIT
+
+
+pre_filter_train = len(train_dataset)
+pre_filter_val = len(val_dataset)
+train_dataset = train_dataset.filter(is_within_token_limit)
+val_dataset = val_dataset.filter(is_within_token_limit)
+print(
+    f"Filtered train: {pre_filter_train} -> {len(train_dataset)} "
+    f"(dropped {pre_filter_train - len(train_dataset)} outliers > {TOKEN_LIMIT} tokens)"
+)
+print(
+    f"Filtered val: {pre_filter_val} -> {len(val_dataset)} "
+    f"(dropped {pre_filter_val - len(val_dataset)} outliers > {TOKEN_LIMIT} tokens)"
+)
 
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    quantization_config=bnb_config,
-    device_map="auto",
-    token=HF_TOKEN,
+    MODEL_NAME, quantization_config=bnb_config, device_map="auto", token=HF_TOKEN
 )
 
 # --- LoRA config ---
@@ -114,12 +147,13 @@ training_args = SFTConfig(
     eval_strategy="epoch",
     save_strategy="epoch",
     load_best_model_at_end=True,
-    bf16=True,
+    fp16=True,
     max_seq_length=MAX_SEQ_LENGTH,
     report_to="wandb" if WANDB_API_KEY else "none",
     hub_model_id=OUTPUT_REPO,
     push_to_hub=True,
     hub_token=HF_TOKEN,
+    dataset_text_field="text",
     optim="adamw_torch",
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": False},
