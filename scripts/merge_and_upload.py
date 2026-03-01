@@ -1,4 +1,14 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "torch",
+#     "transformers>=4.48.0",
+#     "peft>=0.13.0",
+#     "accelerate",
+#     "huggingface_hub",
+#     "sentencepiece",
+# ]
+# ///
 """
 Merge LoRA adapter into base model and upload to HF Hub.
 Runs on HF Jobs (A10G) to avoid local memory constraints.
@@ -6,13 +16,29 @@ Runs on HF Jobs (A10G) to avoid local memory constraints.
 
 import sys
 import os
+import traceback
 
 sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
-import torch
-from huggingface_hub import HfApi, login
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+print("=== merge_and_upload.py starting ===", flush=True)
+
+try:
+    import torch
+
+    print(
+        f"torch {torch.__version__}, CUDA available: {torch.cuda.is_available()}",
+        flush=True,
+    )
+
+    from huggingface_hub import HfApi, login
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    print("All imports done.", flush=True)
+except Exception:
+    traceback.print_exc()
+    sys.exit(1)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -24,8 +50,12 @@ MERGED_REPO = "ratnam1510/ministral-8b-security-scanner"
 
 def main() -> None:
     token = os.environ.get("HF_TOKEN", "")
-    if token:
-        login(token=token)
+    if not token:
+        print("ERROR: HF_TOKEN not set!", flush=True)
+        sys.exit(1)
+
+    login(token=token)
+    print("Logged in to HF Hub.", flush=True)
 
     api = HfApi(token=token)
 
@@ -35,45 +65,51 @@ def main() -> None:
 
     # Load tokenizer
     print("Loading tokenizer...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
-
-    # Load base model in bf16
-    print("Loading base model in bf16...", flush=True)
-    base_model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL, torch_dtype=torch.bfloat16, device_map="cpu", trust_remote_code=True
+    tokenizer = AutoTokenizer.from_pretrained(
+        BASE_MODEL, token=token, trust_remote_code=True
     )
+    print("  Tokenizer loaded.", flush=True)
+
+    # Load base model in bf16 on CPU (needs ~16GB RAM, A10G has 46GB)
+    print("Loading base model in bf16 on CPU...", flush=True)
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        torch_dtype=torch.bfloat16,
+        device_map="cpu",
+        token=token,
+        trust_remote_code=True,
+    )
+    print("  Base model loaded.", flush=True)
 
     # Load and merge LoRA
     print(f"Loading LoRA adapter from {ADAPTER_REPO}...", flush=True)
-    model = PeftModel.from_pretrained(base_model, ADAPTER_REPO)
+    model = PeftModel.from_pretrained(base_model, ADAPTER_REPO, token=token)
+    print("  LoRA adapter loaded.", flush=True)
 
     print("Merging LoRA into base model...", flush=True)
-    model = model.merge_and_unload()
+    merged = model.merge_and_unload()
+    del model, base_model  # free RAM
+    import gc
 
-    # Save merged model locally
-    save_dir = "/tmp/merged_model"
-    print(f"Saving merged model to {save_dir}...", flush=True)
-    model.save_pretrained(save_dir, safe_serialization=True)
-    tokenizer.save_pretrained(save_dir)
+    gc.collect()
+    print("  Merge complete. RAM freed.", flush=True)
 
-    # Report sizes
-    total_size = sum(
-        f.stat().st_size
-        for f in __import__("pathlib").Path(save_dir).rglob("*")
-        if f.is_file()
-    )
-    print(f"Merged model size: {total_size / 1e9:.2f} GB", flush=True)
-
-    # Upload to HF Hub
-    print(f"Uploading to {MERGED_REPO}...", flush=True)
-    api.upload_folder(
-        folder_path=save_dir,
-        repo_id=MERGED_REPO,
-        repo_type="model",
+    # Push directly to Hub (avoids large intermediate disk write)
+    print(f"Pushing merged model to {MERGED_REPO}...", flush=True)
+    merged.push_to_hub(
+        MERGED_REPO,
+        token=token,
         commit_message="Upload merged Ministral-8B + security LoRA model",
+        max_shard_size="2GB",
     )
+    print("  Model pushed.", flush=True)
+
+    print(f"Pushing tokenizer to {MERGED_REPO}...", flush=True)
+    tokenizer.push_to_hub(MERGED_REPO, token=token)
+    print("  Tokenizer pushed.", flush=True)
 
     # Add model card
+    print("Uploading model card...", flush=True)
     model_card = """---
 library_name: transformers
 license: apache-2.0
@@ -117,19 +153,6 @@ outputs = model.generate(inputs, max_new_tokens=512)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```
 
-## API Usage (Inference API)
-
-```python
-from huggingface_hub import InferenceClient
-
-client = InferenceClient("ratnam1510/ministral-8b-security-scanner")
-response = client.text_generation(
-    "Analyze this code for security vulnerabilities: import os; os.system(input())",
-    max_new_tokens=512,
-)
-print(response)
-```
-
 ## Evaluation
 
 Evaluated against the base Ministral-8B model using LLM-as-judge (GLM-4.5-air):
@@ -158,4 +181,8 @@ Dataset quality improvements are planned for future iterations.
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)
