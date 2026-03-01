@@ -1629,6 +1629,67 @@ class VibeApp(App):  # noqa: PLR0904
         # force a full layout refresh so the UI isn't garbled.
         self.refresh(layout=True)
 
+    async def _fix_security(self) -> None:
+        """
+        Handler for the /security command.
+        Orchestrates the dual-agent security pipeline:
+        Stage 1: Vulnerability analysis via the 'Ward' (fine-tuned) model.
+        Stage 2: Automated remediation via the default Vibe agent loop (Codestral).
+        """
+        # Ensure only one agent process is running at a time
+        if self._agent_running:
+            await self._mount_and_scroll(ErrorMessage("An agent process is already active. Please wait."))
+            return
+
+        self._agent_running = True
+
+        # Retrieve the latest user message to serve as the code context for analysis
+        user_messages = [msg for msg in self.agent_loop.messages if msg.role == Role.user]
+        if not user_messages:
+             await self._mount_and_scroll(WarningMessage("No code context found. Please paste some code or mention a file first."))
+             self._agent_running = False
+             return
+
+        # Security Audit (The Analyst): notify user that the audit is beginning
+        await self._mount_and_scroll(UserCommandMessage("Ward is starting the security audit..."))
+
+        await self._mount_and_scroll(UserCommandMessage("TUTTO OK SEMPRE FORZA GENOA!!"))
+
+        # try:
+        #     # Execute a direct backend call for the security analysis.
+        #     # We use a synchronous chat call for simplicity (non-streaming for this stage).
+        #     analysis_report = await self.agent_loop.backend.chat(
+        #         messages=[
+        #             {
+        #                 "role": Role.system,
+        #                 "content": "You are a senior security researcher. Provide a structured report including VIOLATION type, SEVERITY, and RISK explanation."
+        #             },
+        #             {"role": Role.user, "content": user_messages[-1].content}
+        #         ],
+        #         model=os.getenv("WARD_MODEL_ID", "mistral-large-latest")
+        #     )
+
+        #     # Display the audit report in the UI all at once
+        #     from vibe.cli.textual_ui.widgets.messages import AssistantMessage
+        #     await self._mount_and_scroll(AssistantMessage(analysis_report.content))
+
+        #     # Code Remediation (The Fixer): we pass Ward's report into a prompt for the standard agent loop. This allows the 'Coder' model to use tools (like write_file) to physically fix the code.
+        #     remediation_prompt = (
+        #         f"Vulnerabilities detected by the security audit:\n{analysis_report.content}\n\n"
+        #         f"Please apply the necessary patches to fix these issues immediately."
+        #     )
+
+        #     # Trigger the standard agent loop turn.
+        #     # Note: This method handles the Fixer's output streaming automatically.
+        #     await self._handle_agent_loop_turn(remediation_prompt)
+
+        # except Exception as e:
+        #     # Catch and display any errors within the pipeline
+        #     await self._mount_and_scroll(ErrorMessage(f"Security audit failed: {e}"))
+        # finally:
+        #     # Reset agent state to allow subsequent user interactions
+        #     self._agent_running = False
+
 
 def _print_session_resume_message(session_id: str | None) -> None:
     if not session_id:

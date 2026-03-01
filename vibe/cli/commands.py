@@ -77,6 +77,11 @@ class CommandRegistry:
                 description="Browse and resume past sessions",
                 handler="_show_session_picker",
             ),
+            "security": Command(
+            aliases=frozenset(["/security"]),
+            description="Report and fix security issues in the code",
+            handler="_fix_security",
+            ),
         }
 
         for command in excluded_commands:
